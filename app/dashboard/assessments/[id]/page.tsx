@@ -208,12 +208,68 @@ export default function AssessmentWorkbench() {
                             <div className="flex gap-3 pt-2 border-t border-gray-800 mt-4">
                                 <button
                                     type="button"
-                                    className="flex items-center gap-2 px-4 py-2 bg-gray-800 text-gray-200 rounded font-medium border border-gray-700 hover:bg-gray-700 transition"
+                                    className="flex items-center gap-2 px-4 py-2 bg-gray-800 text-gray-200 rounded font-medium border border-gray-700 hover:bg-gray-700 transition disabled:opacity-60"
                                     style={{ outline: "none" }}
                                     tabIndex={0}
+                                    disabled={scanLoadingId === control.id}
+                                    onClick={async () => {
+                                        setScanLoadingId(control.id);
+                                        try {
+                                            // 1. Call the GitHub scan API
+                                            const resp = await fetch('/api/integrations/github/scan');
+                                            const result = await resp.json();
+
+                                            if (result.status === "success") {
+                                                // Assume org name is part of result.raw_data.login or result.raw_data.login
+                                                const orgName = result.raw_data?.login || "org";
+                                                const mfaEnabled = result.mfa_enabled === true;
+                                                // Compose the evidence object
+                                                const evidence = {
+                                                    control_id: control.id,
+                                                    name: 'GitHub MFA Settings',
+                                                    source_type: 'Integration',
+                                                    status: mfaEnabled ? 'Verified' : 'Missing',
+                                                    url: `https://github.com/orgs/${orgName}/settings/security`,
+                                                };
+
+                                                // 2. Save the evidence in the DB
+                                                const { data, error } = await supabase
+                                                    .from('evidence')
+                                                    .insert([evidence])
+                                                    .select()
+                                                    .single();
+
+                                                if (error) {
+                                                    console.error("Supabase insert error:", error);
+                                                } else if (data) {
+                                                    // 3. Update local state
+                                                    setControls(prevControls =>
+                                                        prevControls.map(c =>
+                                                            c.id === control.id
+                                                                ? {
+                                                                    ...c,
+                                                                    evidence: [
+                                                                        ...(c.evidence || []),
+                                                                        data
+                                                                    ]
+                                                                }
+                                                                : c
+                                                        )
+                                                    );
+                                                }
+                                            } else {
+                                                alert(result.message || "Scan failed");
+                                            }
+                                        } catch (err) {
+                                            console.error("Unexpected error conducting GitHub Scan:", err);
+                                            alert("Error running GitHub Scan. Check console.");
+                                        } finally {
+                                            setScanLoadingId(null);
+                                        }
+                                    }}
                                 >
                                     <HiLightningBolt className="text-blue-400" />
-                                    Connect Integration
+                                    {scanLoadingId === control.id ? "Scanning..." : "Auto-Scan GitHub"}
                                 </button>
                                 <button
                                     type="button"
