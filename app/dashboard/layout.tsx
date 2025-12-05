@@ -28,7 +28,7 @@ export default function DashboardLayout({
     { name: "Documents", href: "/dashboard/documents", icon: HiOutlineFolderOpen },
     { name: "Integrations", href: "/dashboard/integrations", icon: HiOutlineLightningBolt },
     // We will add the Wizard link here soon
-    { name: "New Assessment", href: "/dashboard/assessments/new", icon: HiOutlineTemplate }, 
+    { name: "Manage Assessments", href: "/dashboard/assessments", icon: HiOutlineTemplate }, 
   ];
 
   return (

@@ -14,23 +14,27 @@ import {
   HiDocumentSearch,
   HiPaperAirplane,
   HiExternalLink,
+  HiClock
 } from "react-icons/hi";
 
 // --- Types ---
 interface Evidence {
   id: string;
   name: string;
-  source_type: 'Integration' | 'Policy_AI' | 'Manual'; // Matches SQL enum
-  status: 'Verified' | 'Pending' | 'Missing';
+  source_type: 'Integration' | 'Policy_AI' | 'Manual';
+  status: 'Verified' | 'Pending' | 'Missing' | 'Failed';
   url?: string;
   snippet?: string;
+  ai_feedback?: string;
+  confidence_score?: number;
 }
 
 interface Control {
-  id: string;
+  id: string; // UUID
+  control_code: string; // Label like 'AC.1.001'
   family: string;
   description: string;
-  status: 'Compliant' | 'Non-Compliant' | 'Review Required' | 'Missing';
+  status: 'Compliant' | 'Non-Compliant' | 'Review Required' | 'Missing' | 'Not Started' | 'Failed';
   evidence?: Evidence[];
 }
 
@@ -42,13 +46,17 @@ interface ChatMessage {
 export default function AssessmentWorkbench() {
   const params = useParams();
   const assessmentId = params?.id as string;
-  const [scanLoadingId, setScanLoadingId] = useState<string | null>(null);
 
   // --- Data State ---
   const [assessment, setAssessment] = useState<any>(null);
   const [controls, setControls] = useState<Control[]>([]);
   const [loading, setLoading] = useState(true);
+  
+  // --- UI State ---
   const [expandedControl, setExpandedControl] = useState<string | null>(null);
+  const [scanLoadingId, setScanLoadingId] = useState<string | null>(null);
+  const [manualUploadLoadingId, setManualUploadLoadingId] = useState<string | null>(null);
+  const manualUploadInputRefs = useRef<{ [key: string]: HTMLInputElement | null }>({});
 
   // --- Chat State ---
   const [messages, setMessages] = useState<ChatMessage[]>([
@@ -67,6 +75,10 @@ export default function AssessmentWorkbench() {
   // --- Fetch Data ---
   useEffect(() => {
     if (!assessmentId) return;
+
+    // Guard against "new" or invalid IDs
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(assessmentId)) return;
 
     const fetchData = async () => {
       setLoading(true);
@@ -88,7 +100,8 @@ export default function AssessmentWorkbench() {
             *,
             evidence (*)
         `)
-        .eq("assessment_id", assessmentId);
+        .eq("assessment_id", assessmentId)
+        .order('control_code', { ascending: true });
 
       if (ctrlError) console.error("Error fetching controls:", ctrlError);
       else setControls(ctrlData || []);
@@ -99,12 +112,12 @@ export default function AssessmentWorkbench() {
     fetchData();
   }, [assessmentId]);
 
-  // --- Chat Handler ---
+  // --- 1. Chat Handler (RAG) ---
   const handleSendMessage = async () => {
     if (!input.trim()) return;
 
     const userMessage = input;
-    setInput(""); // Clear input
+    setInput(""); 
     setMessages(prev => [...prev, { role: 'user', content: userMessage }]);
     setIsChatLoading(true);
 
@@ -117,43 +130,200 @@ export default function AssessmentWorkbench() {
           context: {
             assessmentTitle: assessment?.title || "Unknown Assessment",
             standard: assessment?.standard || "General",
-            // WE ARE ADDING THIS: Passing the visible controls to the AI
             visibleControls: controls.map(c => ({
-                id: c.id, 
-                status: c.status, 
-                evidenceCount: c.evidence?.length || 0
+              id: c.control_code, 
+              status: c.status, 
+              evidenceCount: c.evidence?.length || 0
             }))
           }
         })
       });
 
       const data = await response.json();
-      
-      if (data.reply) {
-        setMessages(prev => [...prev, { role: 'ai', content: data.reply }]);
-      } else {
-         setMessages(prev => [...prev, { role: 'ai', content: "I encountered an error connecting to the AI." }]);
-      }
+      setMessages(prev => [...prev, { role: 'ai', content: data.reply || "Error connecting to AI." }]);
 
     } catch (error) {
-      console.error(error);
       setMessages(prev => [...prev, { role: 'ai', content: "System Error: Failed to reach Copilot." }]);
     } finally {
       setIsChatLoading(false);
     }
   };
 
+  // --- 2. Auto-Scan Handler (GitHub Integration) ---
+  const handleAutoScan = async (control: Control) => {
+    setScanLoadingId(control.id);
+    try {
+      const response = await fetch('/api/integrations/github/scan');
+      const data = await response.json();
+
+      if (data.status === 'success') {
+        const { data: newEvidence, error } = await supabase
+          .from("evidence")
+          .insert({
+            control_id: control.id,
+            name: `GitHub MFA Settings (${data.org})`,
+            source_type: 'Integration',
+            status: data.mfa_enabled ? 'Verified' : 'Missing',
+            url: `https://github.com/orgs/${data.org}/settings/security`
+          })
+          .select()
+          .single();
+
+        if (error) throw error;
+
+        updateControlEvidence(control.id, newEvidence);
+        alert(`Scan Complete: MFA is ${data.mfa_enabled ? 'Enabled' : 'Disabled'}`);
+      } else {
+        alert("Scan Failed: " + data.error);
+      }
+    } catch (err: any) {
+      console.error(err);
+      alert("System Error during scan.");
+    } finally {
+      setScanLoadingId(null);
+    }
+  };
+
+  // --- 3. Link Policy Handler (Simulated RAG) ---
+  const handleLinkPolicy = async (control: Control) => {
+    setScanLoadingId(control.id);
+    try {
+        await new Promise(r => setTimeout(r, 2000)); // Simulating AI Reading
+
+        const { data: newEvidence, error } = await supabase
+          .from("evidence")
+          .insert({
+            control_id: control.id,
+            name: 'Corp_InfoSec_Policy_v2.pdf', 
+            source_type: 'Policy_AI', 
+            status: 'Pending', 
+            snippet: 'Matched Section 3.1: Access Enforcement'
+          })
+          .select()
+          .single();
+
+        if (error) throw error;
+        updateControlEvidence(control.id, newEvidence);
+
+    } catch (err) {
+        console.error(err);
+    } finally {
+        setScanLoadingId(null);
+    }
+  };
+
+  // --- 4. Manual Upload + AI Validator (Multimodal Agent) ---
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>, control: Control) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setScanLoadingId(control.id);
+    setManualUploadLoadingId(control.id);
+
+    try {
+      // A. Upload to Supabase Storage
+      const path = `${assessmentId}/${control.id}/${Date.now()}_${file.name}`;
+      const { error: uploadError } = await supabase.storage
+        .from("evidence-files")
+        .upload(path, file);
+
+      if (uploadError) throw uploadError;
+
+      // B. Get Public URL
+      const { data: { publicUrl } } = supabase.storage
+        .from("evidence-files")
+        .getPublicUrl(path);
+
+      // C. Create DB Record
+      const { data: newEvidence, error: dbError } = await supabase
+        .from("evidence")
+        .insert({
+          control_id: control.id,
+          name: file.name,
+          source_type: 'Manual',
+          status: 'Pending',
+          url: publicUrl
+        })
+        .select()
+        .single();
+
+      if (dbError) throw dbError;
+
+      // Update UI (Cast newEvidence to 'any' to bypass strict DB type mismatch)
+      updateControlEvidence(control.id, newEvidence as any);
+
+      // D. Trigger AI Validator
+      fetch('/api/evidence/validate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          evidenceId: newEvidence.id,
+          controlDescription: control.description,
+          fileUrl: publicUrl
+        })
+      })
+      .then(res => res.json())
+      .then(aiResult => {
+        if (aiResult.verdict) {
+           // UPDATED ALERT: Now shows the Status (VERIFIED/REJECTED) at the top
+           alert(`AI VERDICT: ${aiResult.verdict.status.toUpperCase()}\n\nReason: ${aiResult.verdict.reasoning}\n\nConfidence: ${aiResult.verdict.confidence_score}%`);
+           
+           // Update UI with Verdict
+           setControls(prev => prev.map(c => {
+             if (c.id === control.id) {
+               const updatedEv = (c.evidence || []).map((ev) => {
+                 if (ev.id === newEvidence.id) {
+                    return { 
+                       ...ev, 
+                       // Map 'Rejected' or 'Inconclusive' to 'Missing' (Red) for the UI Badge
+                       status: (aiResult.verdict.status === 'Verified' ? 'Verified' : 'Failed') as 'Verified' | 'Failed',
+                       ai_feedback: aiResult.verdict.reasoning,
+                       confidence_score: aiResult.verdict.confidence_score
+                     };
+                 }
+                 return ev;
+               });
+               return { ...c, evidence: updatedEv };
+             }
+             return c;
+           }));
+        }
+      });
+
+    } catch (err: any) {
+      console.error("Upload failed:", err);
+      alert("Upload failed: " + err.message);
+    } finally {
+      setScanLoadingId(null);
+      setManualUploadLoadingId(null);
+      if (manualUploadInputRefs.current[control.id]) {
+        manualUploadInputRefs.current[control.id]!.value = "";
+      }
+    }
+  };
+
+  // Helper to update state safely
+  // Helper to update state safely
+  const updateControlEvidence = (controlId: string, newEvidence: Evidence) => {
+    setControls(prev => prev.map(c => {
+        if (c.id === controlId) {
+          return { ...c, evidence: [...(c.evidence || []), newEvidence] };
+        }
+        return c;
+    }));
+  };
+
   const toggleControl = (id: string) => {
     setExpandedControl(expandedControl === id ? null : id);
   };
 
-  if (loading) return <div className="p-10 text-gray-400">Loading workbench...</div>;
+  if (loading) return <div className="p-10 text-gray-400 flex items-center gap-2"><HiClock className="animate-spin"/> Loading workbench...</div>;
   if (!assessment) return <div className="p-10 text-red-400">Assessment not found.</div>;
 
   return (
     <div className="flex h-[calc(100vh-64px)] overflow-hidden bg-[#0f172a] text-gray-300">
       
-      {/* LEFT: Control Matrix (Scrollable) */}
+      {/* LEFT: Control Matrix */}
       <div className="flex-1 flex flex-col border-r border-gray-800 overflow-hidden">
         <header className="px-8 py-6 border-b border-gray-800 bg-[#0f172a]">
             <div className="flex justify-between items-start mb-4">
@@ -180,148 +350,90 @@ export default function AssessmentWorkbench() {
                         <div className="mr-4 text-gray-500">
                             {expandedControl === control.id ? <HiChevronDown size={20}/> : <HiChevronRight size={20}/>}
                         </div>
-                        <div className="w-24 font-mono text-sm font-bold text-gray-400">{control.id}</div>
+                        <div className="w-24 font-mono text-sm font-bold text-gray-400">{control.control_code}</div>
                         <div className="flex-1 text-gray-200 font-medium">{control.description}</div>
-                        <div className="text-sm text-gray-500">{control.status}</div>
+                        <div className={`text-xs px-2 py-1 rounded border font-medium ${
+                        control.status === 'Compliant' ? 'bg-green-900/20 text-green-400 border-green-900' :
+                        control.status === 'Failed' ? 'bg-red-900/20 text-red-400 border-red-900' : // <--- "Failed" is Red
+                        control.status === 'Review Required' ? 'bg-yellow-900/20 text-yellow-400 border-yellow-900' :
+                        'bg-gray-800 text-gray-400 border-gray-700'
+                    }`}>
+                        {control.status}
+                    </div>
                     </div>
 
                     {expandedControl === control.id && (
-                        <div className="bg-[#0f172a] border-t border-gray-800 p-6 flex flex-col gap-5">
-                            <div>
-                                <h4 className="text-xs font-bold text-gray-500 uppercase mb-4">Evidence</h4>
+                        <div className="bg-[#0f172a] border-t border-gray-800 p-6">
+                            <h4 className="text-xs font-bold text-gray-500 uppercase mb-4">Evidence</h4>
+                            
+                            <div className="space-y-2 mb-6">
                                 {control.evidence?.length === 0 ? (
                                     <p className="text-sm text-gray-500 italic">No evidence linked.</p>
                                 ) : (
-                                    control.evidence?.map((ev, idx) => (
-                                        <div key={ev.id ?? ev.name ?? idx} className="p-3 bg-gray-900 border border-gray-800 rounded mb-2 flex justify-between items-center">
+                                    control.evidence?.map((ev) => (
+                                        <div key={ev.id} className="p-3 bg-gray-900 border border-gray-800 rounded mb-2 flex justify-between items-center">
                                             <div className="flex items-center gap-2">
-                                                {ev.source_type === 'Integration' && <HiLightningBolt className="text-blue-400" />}
-                                                {ev.source_type === 'Policy_AI' && <HiDocumentSearch className="text-purple-400" />}
-                                                <span className="text-sm text-white">{ev.name}</span>
+                                                {ev.source_type === 'Integration' && <HiLightningBolt className="text-blue-400"/>}
+                                                {ev.source_type === 'Policy_AI' && <HiDocumentSearch className="text-purple-400"/>}
+                                                {ev.source_type === 'Manual' && <HiCloudUpload className="text-gray-400"/>}
+                                                
+                                                <div className="flex flex-col">
+                                                   <span className="text-sm text-white">{ev.name}</span>
+                                                   {/* Show AI Confidence if available */}
+                                                   {ev.confidence_score !== undefined && ev.confidence_score > 0 && (
+                                                      <span className={`text-[10px] ${ev.confidence_score > 80 ? 'text-green-400' : 'text-yellow-400'}`}>
+                                                        AI Confidence: {ev.confidence_score}%
+                                                      </span>
+                                                   )}
+                                                </div>
+                                                
+                                                {ev.url && <a href={ev.url} target="_blank" className="text-gray-500 hover:text-white ml-2"><HiExternalLink/></a>}
                                             </div>
-                                            <span className="text-xs text-green-400 border border-green-900 px-2 rounded">{ev.status}</span>
+                                            <span className={`text-xs px-2 py-0.5 rounded border ${
+                                                ev.status === 'Verified' ? 'text-green-400 border-green-900 bg-green-900/20' : 
+                                                ev.status === 'Failed' ? 'text-red-400 border-red-900 bg-red-900/20' :
+                                                ev.status === 'Missing' ? 'text-red-400 border-red-900 bg-red-900/20' :
+                                                'text-yellow-400 border-yellow-900 bg-yellow-900/20'
+                                            }`}>{ev.status}</span>
                                         </div>
                                     ))
                                 )}
                             </div>
-                            {/* Action Bar */}
-                            <div className="flex gap-3 pt-2 border-t border-gray-800 mt-4">
-                                <button
-                                    type="button"
-                                    className="flex items-center gap-2 px-4 py-2 bg-gray-800 text-gray-200 rounded font-medium border border-gray-700 hover:bg-gray-700 transition disabled:opacity-60"
-                                    style={{ outline: "none" }}
-                                    tabIndex={0}
-                                    disabled={scanLoadingId === control.id}
-                                    onClick={async () => {
-                                        setScanLoadingId(control.id);
-                                        try {
-                                            // 1. Call the GitHub scan API
-                                            const resp = await fetch('/api/integrations/github/scan');
-                                            const result = await resp.json();
 
-                                            if (result.status === "success") {
-                                                // Assume org name is part of result.raw_data.login or result.raw_data.login
-                                                const orgName = result.raw_data?.login || "org";
-                                                const mfaEnabled = result.mfa_enabled === true;
-                                                // Compose the evidence object
-                                                const evidence = {
-                                                    control_id: control.id,
-                                                    name: 'GitHub MFA Settings',
-                                                    source_type: 'Integration',
-                                                    status: mfaEnabled ? 'Verified' : 'Missing',
-                                                    url: `https://github.com/orgs/${orgName}/settings/security`,
-                                                };
+                            <div className="flex gap-3 mt-4 border-t border-gray-800 pt-4">
+                                {/* Hidden Input for File Upload */}
+                                <input
+                                    type="file"
+                                    className="hidden"
+                                    ref={(el) => { manualUploadInputRefs.current[control.id] = el; }}
+                                    onChange={(e) => handleFileUpload(e, control)}
+                                />
 
-                                                // 2. Save the evidence in the DB
-                                                const { data, error } = await supabase
-                                                    .from('evidence')
-                                                    .insert([evidence])
-                                                    .select()
-                                                    .single();
-
-                                                if (error) {
-                                                    console.error("Supabase insert error:", error);
-                                                } else if (data) {
-                                                    // 3. Update local state
-                                                    setControls(prevControls =>
-                                                        prevControls.map(c =>
-                                                            c.id === control.id
-                                                                ? {
-                                                                    ...c,
-                                                                    evidence: [
-                                                                        ...(c.evidence || []),
-                                                                        data
-                                                                    ]
-                                                                }
-                                                                : c
-                                                        )
-                                                    );
-                                                }
-                                            } else {
-                                                alert(result.message || "Scan failed");
-                                            }
-                                        } catch (err) {
-                                            console.error("Unexpected error conducting GitHub Scan:", err);
-                                            alert("Error running GitHub Scan. Check console.");
-                                        } finally {
-                                            setScanLoadingId(null);
-                                        }
-                                    }}
+                                <button 
+                                    onClick={() => manualUploadInputRefs.current[control.id]?.click()}
+                                    disabled={manualUploadLoadingId === control.id}
+                                    className="flex items-center gap-2 px-4 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded text-xs font-medium text-white transition disabled:opacity-50"
                                 >
-                                    <HiLightningBolt className="text-blue-400" />
+                                    <HiCloudUpload className={manualUploadLoadingId === control.id ? "animate-spin" : "text-gray-400"}/> 
+                                    {manualUploadLoadingId === control.id ? "Uploading..." : "Upload Evidence"}
+                                </button>
+
+                                <button 
+                                    onClick={() => handleAutoScan(control)}
+                                    disabled={scanLoadingId === control.id}
+                                    className="flex items-center gap-2 px-4 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded text-xs font-medium text-white transition disabled:opacity-50"
+                                >
+                                    <HiLightningBolt className={scanLoadingId === control.id ? "animate-spin" : "text-yellow-400"}/> 
                                     {scanLoadingId === control.id ? "Scanning..." : "Auto-Scan GitHub"}
                                 </button>
-                                <button
-                                    type="button"
-                                    className="flex items-center gap-2 px-4 py-2 bg-purple-700 text-white rounded font-medium border border-purple-800 hover:bg-purple-800 transition disabled:opacity-60"
-                                    style={{ outline: "none" }}
-                                    tabIndex={0}
+                                
+                                <button 
+                                    onClick={() => handleLinkPolicy(control)}
                                     disabled={scanLoadingId === control.id}
-                                    onClick={async (e) => {
-                                        setScanLoadingId(control.id);
-                                        await new Promise((res) => setTimeout(res, 2000));
-
-                                        try {
-                                            // Replace with your import path if not already imported
-                                            // import { supabase } from '@/lib/supabaseClient';
-                                            const { data, error } = await supabase
-                                                .from('evidence')
-                                                .insert([{
-                                                    control_id: control.id,
-                                                    name: 'Corp_InfoSec_Policy_v2.pdf',
-                                                    source_type: 'Policy_AI',
-                                                    status: 'Pending',
-                                                    snippet: 'Matched Section 3.1'
-                                                }])
-                                                .select()
-                                                .single();
-
-                                            if (error) {
-                                                console.error("Supabase insert error:", error);
-                                            } else if (data) {
-                                                setControls(prevControls =>
-                                                    prevControls.map(c =>
-                                                        c.id === control.id
-                                                            ? {
-                                                                ...c,
-                                                                evidence: [
-                                                                    ...(c.evidence || []),
-                                                                    data
-                                                                ]
-                                                            }
-                                                            : c
-                                                    )
-                                                );
-                                            }
-                                        } catch (err) {
-                                            console.error("Unexpected error inserting evidence:", err);
-                                        } finally {
-                                            setScanLoadingId(null);
-                                        }
-                                    }}
+                                    className="flex items-center gap-2 px-4 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded text-xs font-medium text-white transition disabled:opacity-50"
                                 >
-                                    <HiDocumentSearch className="text-white" />
-                                    {scanLoadingId === control.id ? "Scanning Library..." : "Link Policy Document"}
+                                    <HiDocumentSearch className={scanLoadingId === control.id ? "animate-spin" : "text-purple-400"}/> 
+                                    {scanLoadingId === control.id ? "Analyzing..." : "Link Policy Document"}
                                 </button>
                             </div>
                         </div>
@@ -331,14 +443,13 @@ export default function AssessmentWorkbench() {
         </div>
       </div>
       
-      {/* RIGHT: Vibe Copilot (Fixed Width) */}
+      {/* RIGHT: Vibe Copilot */}
       <div className="w-[350px] bg-[#0f172a] border-l border-gray-800 flex flex-col">
         <div className="p-4 border-b border-gray-800 flex items-center gap-2 bg-[#1e293b]/30">
             <HiChatAlt2 className="text-[#38bdf8]"/>
             <span className="font-bold text-white">Vibe Copilot</span>
         </div>
         
-        {/* Chat History */}
         <div className="flex-1 p-4 space-y-4 overflow-y-auto">
             {messages.map((msg, idx) => (
                 <div key={idx} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
@@ -359,7 +470,6 @@ export default function AssessmentWorkbench() {
             <div ref={messagesEndRef} />
         </div>
 
-        {/* Chat Input */}
         <div className="p-4 border-t border-gray-800 bg-[#1e293b]/30">
             <div className="relative">
                 <input 

@@ -17,6 +17,7 @@ export default function DashboardPage() {
   const [assessments, setAssessments] = useState<any[]>([]);
   const [riskySystems, setRiskySystems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [failingControls, setFailingControls] = useState<any[]>([]);
 
   // Fetch Logic
   useEffect(() => {
@@ -41,6 +42,16 @@ export default function DashboardPage() {
 
       if (sysData) setRiskySystems(sysData);
 
+      // 3. Fetch REAL Top Failing Controls (No more mocks)
+      // We group by 'control_code' to see which specific requirement (e.g. AC.1.002) is failing most often.
+      const { data: failingControls } = await supabase
+        .from("controls")
+        .select("control_code, description")
+        .in("status", ["Non-Compliant", "Missing"]) // "Missing" is what the AI sets on rejection
+        .limit(5);
+        
+        if (failingControls) setFailingControls(failingControls);
+        
       setLoading(false);
     };
     fetchData();
@@ -155,32 +166,24 @@ export default function DashboardPage() {
                 <HiTrendingDown className="text-yellow-500" /> Top Failing Controls
             </h2>
             <div className="space-y-3">
-                {/* Mock Data - In Phase 5 we query this from the 'controls' table */}
-                <div className="p-3 bg-gray-900/50 rounded border border-gray-800 hover:border-red-500/50 transition cursor-pointer group">
-                    <div className="flex justify-between mb-1">
-                        <span className="text-xs font-mono text-red-400 bg-red-900/20 px-1.5 py-0.5 rounded">AC.1.002</span>
-                        <span className="text-xs text-gray-500">6 Failing Assets</span>
+                {!failingControls || failingControls.length === 0 ? (
+                   <p className="text-gray-500 text-sm italic">All controls are compliant. Good job!</p>
+                ) : (
+                   // Simple aggregation (in a real app, we'd use a SQL View for counts)
+                   failingControls.map((ctrl, idx) => (
+                    <div key={idx} className="p-3 bg-gray-900/50 rounded border border-gray-800 hover:border-red-500/50 transition cursor-pointer group">
+                        <div className="flex justify-between mb-1">
+                            <span className="text-xs font-mono text-red-400 bg-red-900/20 px-1.5 py-0.5 rounded">{ctrl.control_code}</span>
+                            <span className="text-xs text-red-500 font-bold">Action Required</span>
+                        </div>
+                        <p className="text-sm text-gray-300 group-hover:text-white truncate">{ctrl.description}</p>
                     </div>
-                    <p className="text-sm text-gray-300 group-hover:text-white">Employ the principle of least privilege.</p>
-                </div>
-                <div className="p-3 bg-gray-900/50 rounded border border-gray-800 hover:border-red-500/50 transition cursor-pointer group">
-                    <div className="flex justify-between mb-1">
-                        <span className="text-xs font-mono text-red-400 bg-red-900/20 px-1.5 py-0.5 rounded">IA.2.001</span>
-                        <span className="text-xs text-gray-500">4 Failing Assets</span>
-                    </div>
-                    <p className="text-sm text-gray-300 group-hover:text-white">Multi-factor authentication (MFA).</p>
-                </div>
-                 <div className="p-3 bg-gray-900/50 rounded border border-gray-800 hover:border-red-500/50 transition cursor-pointer group">
-                    <div className="flex justify-between mb-1">
-                        <span className="text-xs font-mono text-red-400 bg-red-900/20 px-1.5 py-0.5 rounded">SC.1.175</span>
-                        <span className="text-xs text-gray-500">3 Failing Assets</span>
-                    </div>
-                    <p className="text-sm text-gray-300 group-hover:text-white">Monitor inbound and outbound communications.</p>
-                </div>
+                   ))
+                )}
             </div>
-            <button className="w-full mt-4 py-2 text-xs font-medium text-gray-400 hover:text-white border border-gray-800 rounded hover:bg-gray-800 transition">
-                View Risk Register
-            </button>
+            <Link href="/dashboard/assessments" className="block w-full mt-4 py-2 text-center text-xs font-medium text-gray-400 hover:text-white border border-gray-800 rounded hover:bg-gray-800 transition">
+                View All Audits
+            </Link>
         </div>
       </div>
 
