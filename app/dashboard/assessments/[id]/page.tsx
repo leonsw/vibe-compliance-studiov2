@@ -184,29 +184,51 @@ export default function AssessmentWorkbench() {
     }
   };
 
-  // --- 3. Link Policy Handler (Simulated RAG) ---
+  // --- 3. Real Policy Mapper (RAG) ---
   const handleLinkPolicy = async (control: Control) => {
     setScanLoadingId(control.id);
     try {
-        await new Promise(r => setTimeout(r, 2000)); // Simulating AI Reading
+        // Call the Mapper API
+        const response = await fetch('/api/policy/map', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                controlId: control.id,
+                controlCode: control.control_code,
+                controlDescription: control.description
+            })
+        });
 
-        const { data: newEvidence, error } = await supabase
-          .from("evidence")
-          .insert({
-            control_id: control.id,
-            name: 'Corp_InfoSec_Policy_v2.pdf', 
-            source_type: 'Policy_AI', 
-            status: 'Pending', 
-            snippet: 'Matched Section 3.1: Access Enforcement'
-          })
-          .select()
-          .single();
+        const result = await response.json();
 
-        if (error) throw error;
-        updateControlEvidence(control.id, newEvidence);
+        if (result.found) {
+            // Success: We found a matching policy paragraph!
+            const { data: newEvidence, error } = await supabase
+              .from("evidence")
+              .insert({
+                control_id: control.id,
+                name: result.evidenceData.name, 
+                source_type: 'Policy_AI', 
+                status: 'Pending', // Pending human review
+                snippet: result.evidenceData.snippet,
+                confidence_score: result.evidenceData.confidence,
+                ai_feedback: `AI matched this policy section with ${result.evidenceData.confidence}% similarity.`
+              })
+              .select()
+              .single();
 
-    } catch (err) {
+            if (error) throw error;
+            updateControlEvidence(control.id, newEvidence as any);
+            alert(`Policy Linked!\n\nDocument: ${result.evidenceData.name}\nMatch Score: ${result.evidenceData.confidence}%`);
+
+        } else {
+            // Failure: No policy matches this requirement
+            alert("Analysis Complete: No relevant policy documents found in your library for this specific requirement.");
+        }
+
+    } catch (err: any) {
         console.error(err);
+        alert("Policy Scan Error: " + err.message);
     } finally {
         setScanLoadingId(null);
     }
