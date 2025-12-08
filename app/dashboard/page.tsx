@@ -46,12 +46,12 @@ export default function DashboardPage() {
       // We group by 'control_code' to see which specific requirement (e.g. AC.1.002) is failing most often.
       const { data: failingControls } = await supabase
         .from("controls")
-        .select("control_code, description")
-        .in("status", ["Non-Compliant", "Missing"]) // "Missing" is what the AI sets on rejection
+        .select("control_code, description, status")
+        .in("status", ["Failed", "Non-Compliant", "Missing"]) // "Missing" is what the AI sets on rejection
         .limit(5);
         
         if (failingControls) setFailingControls(failingControls);
-        
+
       setLoading(false);
     };
     fetchData();
