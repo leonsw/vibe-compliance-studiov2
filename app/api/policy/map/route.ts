@@ -27,18 +27,16 @@ export async function POST(req: Request) {
 
     const embedding = embeddingResponse.data[0].embedding;
 
-    // 2. Search the Vector Database (using the function we built for the Chatbot)
-    // We want the single BEST match.
-    // 2. Search the Vector Database
-    console.log("Searching DB with Threshold 0.01...");
+    // 2. Search (Hybrid: Vector + Keywords)
+    console.log(`Searching for: "${controlDescription}"`);
     
     const { data: matches, error: searchError } = await supabase
-      .rpc('match_documents', {
+      .rpc('match_documents_hybrid', {
         query_embedding: embedding,
-        match_threshold: 0.25, // <--- LOWERED TO ALMOST ZERO
+        query_text: controlDescription, // Pass text for keyword search
+        match_threshold: 0.25, 
         match_count: 5
       });
-
     if (searchError) throw searchError;
 
     // Log the top results to see the REAL score
