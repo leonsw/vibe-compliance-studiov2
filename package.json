@@ -11,6 +11,8 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.71.0",
     "@supabase/supabase-js": "^2.86.0",
+    "jspdf": "^3.0.4",
+    "jspdf-autotable": "^5.0.2",
     "next": "16.0.7",
     "openai": "^6.10.0",
     "pdf2json": "^4.0.0",

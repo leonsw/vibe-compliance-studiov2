@@ -287,29 +287,32 @@ export default function AssessmentWorkbench() {
       .then(res => res.json())
       .then(aiResult => {
         if (aiResult.verdict) {
-           // UPDATED ALERT: Now shows the Status (VERIFIED/REJECTED) at the top
-           alert(`AI VERDICT: ${aiResult.verdict.status.toUpperCase()}\n\nReason: ${aiResult.verdict.reasoning}\n\nConfidence: ${aiResult.verdict.confidence_score}%`);
-           
-           // Update UI with Verdict
-           setControls(prev => prev.map(c => {
-             if (c.id === control.id) {
-               const updatedEv = (c.evidence || []).map((ev) => {
-                 if (ev.id === newEvidence.id) {
-                    return { 
-                       ...ev, 
-                       // Map 'Rejected' or 'Inconclusive' to 'Missing' (Red) for the UI Badge
-                       status: (aiResult.verdict.status === 'Verified' ? 'Verified' : 'Failed') as 'Verified' | 'Failed',
-                       ai_feedback: aiResult.verdict.reasoning,
-                       confidence_score: aiResult.verdict.confidence_score
-                     };
-                 }
-                 return ev;
-               });
-               return { ...c, evidence: updatedEv };
-             }
-             return c;
-           }));
-        }
+            const verdictStatus = aiResult.verdict.status === 'Verified' ? 'Verified' : 'Failed';
+            
+            alert(`AI VERDICT: ${verdictStatus}\n\nReason: ${aiResult.verdict.reasoning}\nConfidence: ${aiResult.verdict.confidence_score}%`);
+ 
+            // --- JIRA TRIGGER (NEW) ---
+            if (verdictStatus === 'Failed') {
+                const createTicket = confirm("Control Failed! Do you want to auto-create a Jira Remediation Ticket?");
+                if (createTicket) {
+                    // Call Jira API
+                    fetch('/api/integrations/jira/create', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            title: control.control_code + " - " + control.description.substring(0, 50),
+                            description: `AI Logic: ${aiResult.verdict.reasoning}\n\nConfidence: ${aiResult.verdict.confidence_score}%`,
+                            controlId: control.id
+                        })
+                    })
+                    .then(r => r.json())
+                    .then(jira => {
+                        if (jira.success) alert(`Ticket Created: ${jira.ticketKey}`);
+                        else alert("Jira Error: " + jira.error);
+                    });
+                }
+            }
+        }  
       });
 
     } catch (err: any) {
@@ -324,6 +327,57 @@ export default function AssessmentWorkbench() {
     }
   };
 
+ // --- 5. Sync Jira Handler (Fixed Types) ---
+ const handleSyncJira = async (evidence: Evidence, control: Control) => {
+    // In a real app, call API /api/integrations/jira/sync
+    const isClosed = confirm(`Simulating Jira Sync for ${evidence.name}...\n\nIs the ticket closed in Jira? (Click OK to simulate 'Done')`);
+    
+    if (isClosed) {
+        try {
+            // 1. Update Evidence to Verified
+            const { error: evError } = await supabase
+                .from("evidence")
+                .update({ status: 'Verified' })
+                .eq("id", evidence.id);
+            
+            if (evError) throw evError;
+
+            // 2. Update Control to 'Review Required'
+            const { error: ctrlError } = await supabase
+                .from("controls")
+                .update({ status: 'Review Required' })
+                .eq("id", control.id);
+
+            if (ctrlError) throw ctrlError;
+
+            // 3. Update Local State (With Type Casting)
+            setControls(prev => prev.map(c => {
+                if (c.id === control.id) {
+                    // Update Evidence List
+                    const updatedEv = c.evidence?.map(e => 
+                        e.id === evidence.id 
+                        ? { ...e, status: 'Verified' as 'Verified' } // <--- FIX 1: Explicit Cast
+                        : e
+                    );
+                    
+                    // Update Control Status
+                    return { 
+                        ...c, 
+                        status: 'Review Required' as 'Review Required', // <--- FIX 2: Explicit Cast
+                        evidence: updatedEv 
+                    };
+                }
+                return c;
+            }));
+            
+            alert("Synced! Ticket closed. Control marked for review.");
+
+        } catch (err: any) {
+            console.error("Sync error:", err);
+            alert("Sync failed: " + err.message);
+        }
+    }
+  };
   // Helper to update state safely
   // Helper to update state safely
   const updateControlEvidence = (controlId: string, newEvidence: Evidence) => {
@@ -400,23 +454,46 @@ export default function AssessmentWorkbench() {
                                                 {ev.source_type === 'Manual' && <HiCloudUpload className="text-gray-400"/>}
                                                 
                                                 <div className="flex flex-col">
-                                                   <span className="text-sm text-white">{ev.name}</span>
-                                                   {/* Show AI Confidence if available */}
-                                                   {ev.confidence_score !== undefined && ev.confidence_score > 0 && (
-                                                      <span className={`text-[10px] ${ev.confidence_score > 80 ? 'text-green-400' : 'text-yellow-400'}`}>
+                                                    <span className="text-sm text-white flex items-center gap-2">
+                                                        {ev.name}
+                                                        {/* LINK TO EXTERNAL URL */}
+                                                        {ev.url && (
+                                                            <a href={ev.url} target="_blank" rel="noopener noreferrer" className="text-gray-500 hover:text-blue-400">
+                                                                <HiExternalLink />
+                                                            </a>
+                                                        )}
+                                                    </span>
+                                                    
+                                                    {/* AI Score */}
+                                                    {ev.confidence_score !== undefined && ev.confidence_score > 0 && (
+                                                        <span className={`text-[10px] ${ev.confidence_score > 80 ? 'text-green-400' : 'text-yellow-400'}`}>
                                                         AI Confidence: {ev.confidence_score}%
-                                                      </span>
-                                                   )}
+                                                        </span>
+                                                    )}
                                                 </div>
-                                                
-                                                {ev.url && <a href={ev.url} target="_blank" className="text-gray-500 hover:text-white ml-2"><HiExternalLink/></a>}
                                             </div>
-                                            <span className={`text-xs px-2 py-0.5 rounded border ${
-                                                ev.status === 'Verified' ? 'text-green-400 border-green-900 bg-green-900/20' : 
-                                                ev.status === 'Failed' ? 'text-red-400 border-red-900 bg-red-900/20' :
-                                                ev.status === 'Missing' ? 'text-red-400 border-red-900 bg-red-900/20' :
-                                                'text-yellow-400 border-yellow-900 bg-yellow-900/20'
-                                            }`}>{ev.status}</span>
+                                    
+                                            <div className="flex items-center gap-3">
+                                                {/* --- NEW: SYNC JIRA BUTTON --- */}
+                                                {ev.name.includes("Remediation Ticket") && ev.status !== 'Verified' && (
+                                                    <button 
+                                                        onClick={() => handleSyncJira(ev, control)}
+                                                        className="text-[10px] px-2 py-1 bg-blue-900/30 text-blue-300 border border-blue-800 rounded hover:bg-blue-800 transition"
+                                                    >
+                                                        Sync Status
+                                                    </button>
+                                                )}
+                                    
+                                                {/* Status Badge */}
+                                                <span className={`text-xs px-2 py-0.5 rounded border ${
+                                                    ev.status === 'Verified' ? 'text-green-400 border-green-900 bg-green-900/20' : 
+                                                    ev.status === 'Failed' ? 'text-red-400 border-red-900 bg-red-900/20' :
+                                                    ev.status === 'Missing' ? 'text-gray-400 border-gray-700 bg-gray-900/50' :
+                                                    'text-yellow-400 border-yellow-900 bg-yellow-900/20'
+                                                }`}>
+                                                    {ev.status}
+                                                </span>
+                                            </div>
                                         </div>
                                     ))
                                 )}

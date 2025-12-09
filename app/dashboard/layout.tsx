@@ -11,7 +11,8 @@ import {
   HiOutlineCog,
   HiOutlineUserCircle,
   HiMenuAlt2,
-  HiX
+  HiX,
+  HiDocumentReport
 } from "react-icons/hi";
 
 export default function DashboardLayout({
@@ -30,6 +31,7 @@ export default function DashboardLayout({
     // We will add the Wizard link here soon
     { name: "Manage Assessments", href: "/dashboard/assessments", icon: HiOutlineTemplate }, 
     { name: "Admin", href: "/dashboard/admin", icon: HiOutlineCog },
+    { name: "Reports", href: "/dashboard/reports", icon: HiDocumentReport },
   ];
 
   return (
