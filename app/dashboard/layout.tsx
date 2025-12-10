@@ -14,6 +14,7 @@ import {
   HiX,
   HiDocumentReport
 } from "react-icons/hi";
+import { HiMiniFolder } from "react-icons/hi2";
 
 export default function DashboardLayout({
   children,
@@ -32,6 +33,8 @@ export default function DashboardLayout({
     { name: "Manage Assessments", href: "/dashboard/assessments", icon: HiOutlineTemplate }, 
     { name: "Admin", href: "/dashboard/admin", icon: HiOutlineCog },
     { name: "Reports", href: "/dashboard/reports", icon: HiDocumentReport },
+    { name: "Standards", href: "/dashboard/standards", icon: HiMiniFolder},
+
   ];
 
   return (
