@@ -8,9 +8,13 @@ import {
   HiExclamation,
   HiServer,
   HiCheckCircle,
+  HiOutlineCheckCircle,
   HiArrowRight,
   HiTrendingDown,
-  HiFire
+  HiFire,
+  HiDocumentText,
+  HiDatabase,
+  HiPuzzle
 } from "react-icons/hi";
 
 export default function DashboardPage() {
@@ -18,6 +22,13 @@ export default function DashboardPage() {
   const [riskySystems, setRiskySystems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [failingControls, setFailingControls] = useState<any[]>([]);
+
+  // Onboarding steps state
+  const [hasIntegration, setHasIntegration] = useState<boolean>(false);
+  const [hasPolicy, setHasPolicy] = useState<boolean>(false);
+  const [hasStandard, setHasStandard] = useState<boolean>(false);
+  const [hasAssessment, setHasAssessment] = useState<boolean>(false);
+  const [onboardingLoading, setOnboardingLoading] = useState(true);
 
   // Fetch Logic
   useEffect(() => {
@@ -30,7 +41,7 @@ export default function DashboardPage() {
         .select("*")
         .order("created_at", { ascending: false })
         .limit(5);
-      
+
       if (asmData) setAssessments(asmData);
 
       // 2. Fetch Top Risky Assets (Real data from 'systems' table)
@@ -43,23 +54,157 @@ export default function DashboardPage() {
       if (sysData) setRiskySystems(sysData);
 
       // 3. Fetch REAL Top Failing Controls (No more mocks)
-      // We group by 'control_code' to see which specific requirement (e.g. AC.1.002) is failing most often.
       const { data: failingControls } = await supabase
         .from("controls")
         .select("control_code, description, status")
-        .in("status", ["Failed", "Non-Compliant", "Missing"]) // "Missing" is what the AI sets on rejection
+        .in("status", ["Failed", "Non-Compliant", "Missing"])
         .limit(5);
-        
-        if (failingControls) setFailingControls(failingControls);
+
+      if (failingControls) setFailingControls(failingControls);
 
       setLoading(false);
+
+      // 4. Onboarding widget: Fetch existence of each requirement as count>0
+      setOnboardingLoading(true);
+      const [
+        { count: integrationsCount },
+        { count: policyCount },
+        { count: standardsCount },
+        { count: assessmentsCount },
+      ] = await Promise.all([
+        supabase.from("integrations").select("id", { count: "exact", head: true }),
+        supabase.from("documents").select("id", { count: "exact", head: true }),
+        supabase.from("standards_library").select("id", { count: "exact", head: true }),
+        supabase.from("assessments").select("id", { count: "exact", head: true }),
+      ]);
+      setHasIntegration(!!integrationsCount && integrationsCount > 0);
+      setHasPolicy(!!policyCount && policyCount > 0);
+      setHasStandard(!!standardsCount && standardsCount > 0);
+      setHasAssessment(!!assessmentsCount && assessmentsCount > 0);
+      setOnboardingLoading(false);
     };
     fetchData();
   }, []);
 
+  // Calculate onboarding completion
+  const steps = [
+    {
+      name: "Connect Integration",
+      description: "Integrate with your existing services",
+      href: "/dashboard/integrations",
+      done: hasIntegration,
+      icon: <HiPuzzle className="w-6 h-6" />,
+    },
+    {
+      name: "Upload Policy",
+      description: "Add your foundational policy documents",
+      href: "/dashboard/documents",
+      done: hasPolicy,
+      icon: <HiDocumentText className="w-6 h-6" />,
+    },
+    {
+      name: "Import Standard",
+      description: "Import or select a compliance standard",
+      href: "/dashboard/standards",
+      done: hasStandard,
+      icon: <HiDatabase className="w-6 h-6" />,
+    },
+    {
+      name: "Run Assessment",
+      description: "Start your first compliance assessment",
+      href: "/dashboard/assessments/new",
+      done: hasAssessment,
+      icon: <HiCheckCircle className="w-6 h-6" />,
+    },
+  ];
+  const completedSteps = steps.filter((s) => s.done).length;
+  const progressPercent = Math.round((completedSteps / steps.length) * 100);
+
   return (
     <div className="p-8 text-gray-300 space-y-8">
-      
+
+      {/* ONBOARDING WIDGET */}
+      <div className="w-full">
+        <div className="bg-[#1e293b] border border-gray-800 rounded-xl px-6 py-7 mb-10 relative overflow-hidden">
+          <h2 className="text-2xl font-bold text-white mb-2 flex items-center gap-3">
+            Welcome to Vibe Studio
+          </h2>
+          {onboardingLoading ? (
+            <div className="py-8 text-gray-500">Checking environment setup...</div>
+          ) : progressPercent === 100 ? (
+            <div className="flex items-center justify-between p-6 rounded-lg bg-green-600/10 border border-green-800 my-3 mt-6">
+              <div className="flex items-center gap-3">
+                <HiCheckCircle className="w-8 h-8 text-green-400" />
+                <span className="text-lg font-bold text-green-300">System Fully Operational</span>
+              </div>
+              <span className="text-green-400 font-mono text-md">
+                All onboarding steps completed!
+              </span>
+            </div>
+          ) : (
+            <>
+              <div className="mb-4">
+                <div className="flex items-center gap-3">
+                  <span className="text-sm font-medium text-gray-400">
+                    Onboarding Progress:
+                  </span>
+                  <span className="font-bold text-white text-base">
+                    {completedSteps}/{steps.length}
+                  </span>
+                  <div className="flex-1 flex items-center ml-4">
+                    <div className="w-48 bg-gray-700 h-2 rounded-full overflow-hidden">
+                      <div
+                        style={{ width: `${progressPercent}%` }}
+                        className={`h-full transition-all duration-300 ${
+                          progressPercent === 100 ? "bg-green-500" : "bg-blue-500"
+                        }`}
+                      ></div>
+                    </div>
+                    <span className="ml-3 text-xs font-mono text-gray-400">
+                      {progressPercent}%
+                    </span>
+                  </div>
+                </div>
+              </div>
+              {/* Steps List */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+                {steps.map((step, idx) => (
+                  <Link
+                    href={step.href}
+                    key={idx}
+                    className={`block rounded-xl border transition p-4 group relative h-full cursor-pointer ${
+                      step.done
+                        ? "border-green-700 bg-green-800/10 opacity-70"
+                        : "border-blue-700 bg-blue-900/10 shadow-lg hover:bg-blue-900/30"
+                    }`}
+                    tabIndex={0}
+                  >
+                    <div className="flex items-center gap-2 mb-2">
+                      {step.icon}
+                      <span className={`font-semibold text-sm ${
+                        step.done ? "text-green-300" : "text-[#38bdf8] group-hover:text-white"
+                        }`}>
+                        {step.name}
+                      </span>
+                      {step.done ? (
+                        <HiCheckCircle className="w-5 h-5 ml-1 text-green-400" aria-label="completed"/>
+                      ) : (
+                        <HiOutlineCheckCircle className="w-5 h-5 ml-1 text-[#38bdf8]" aria-label="not completed"/>
+                      )}
+                    </div>
+                    <div className={`text-xs ${
+                      step.done ? "text-green-200" : "text-blue-200 group-hover:text-white"
+                    }`}>
+                      {step.description}
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
       {/* HEADER */}
       <div className="flex justify-between items-end">
         <div>

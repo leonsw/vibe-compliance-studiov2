@@ -28,13 +28,13 @@ export default function DashboardLayout({
   const navigation = [
     { name: "Dashboard", href: "/dashboard", icon: HiOutlineHome },
     { name: "Documents", href: "/dashboard/documents", icon: HiOutlineFolderOpen },
+    { name: "Assessment Schedules", href: "/dashboard/schedules", icon: HiOutlineFolderOpen }, // New item
     { name: "Integrations", href: "/dashboard/integrations", icon: HiOutlineLightningBolt },
     // We will add the Wizard link here soon
     { name: "Manage Assessments", href: "/dashboard/assessments", icon: HiOutlineTemplate }, 
     { name: "Admin", href: "/dashboard/admin", icon: HiOutlineCog },
     { name: "Reports", href: "/dashboard/reports", icon: HiDocumentReport },
     { name: "Standards", href: "/dashboard/standards", icon: HiMiniFolder},
-
   ];
 
   return (

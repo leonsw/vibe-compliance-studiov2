@@ -26,3 +26,4 @@
 - [ ] **Jira Integration:** Two-way sync for remediation tickets.
 - [ ] **Okta Integration:** Automated User Access Reviews.
 - [ ] **Export Engine:** Generate PDF/Word SSP (System Security Plan) documents.
+- [ ] **Attach Standards to assets:** drag and drop standards and/or assesments to assets.
