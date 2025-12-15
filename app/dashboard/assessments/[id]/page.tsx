@@ -541,54 +541,6 @@ export default function AssessmentWorkbench() {
             ))}
         </div>
       </div>
-      
-      {/* RIGHT: Vibe Copilot */}
-      <div className="w-[350px] bg-[#0f172a] border-l border-gray-800 flex flex-col">
-        <div className="p-4 border-b border-gray-800 flex items-center gap-2 bg-[#1e293b]/30">
-            <HiChatAlt2 className="text-[#38bdf8]"/>
-            <span className="font-bold text-white">Vibe Copilot</span>
-        </div>
-        
-        <div className="flex-1 p-4 space-y-4 overflow-y-auto">
-            {messages.map((msg, idx) => (
-                <div key={idx} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
-                    <div className={`w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center ${msg.role === 'ai' ? 'bg-gradient-to-tr from-blue-600 to-purple-600' : 'bg-gray-700'}`}>
-                        {msg.role === 'ai' ? <HiLightningBolt className="text-white w-4 h-4"/> : <span className="text-xs">You</span>}
-                    </div>
-                    <div className={`p-3 rounded-lg text-sm max-w-[80%] ${msg.role === 'ai' ? 'bg-gray-800 border border-gray-700 text-gray-300 rounded-tl-none' : 'bg-[#38bdf8] text-[#0f172a] rounded-tr-none'}`}>
-                        {msg.content}
-                    </div>
-                </div>
-            ))}
-            {isChatLoading && (
-                <div className="flex gap-3">
-                     <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-600 to-purple-600 flex-shrink-0 animate-pulse"></div>
-                     <div className="bg-gray-800 p-3 rounded-lg text-sm text-gray-400 italic">Thinking...</div>
-                </div>
-            )}
-            <div ref={messagesEndRef} />
-        </div>
-
-        <div className="p-4 border-t border-gray-800 bg-[#1e293b]/30">
-            <div className="relative">
-                <input 
-                    type="text" 
-                    value={input}
-                    onChange={(e) => setInput(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
-                    placeholder="Ask about this control..." 
-                    className="w-full bg-gray-900 border border-gray-700 rounded-lg pl-4 pr-10 py-3 text-sm text-white focus:outline-none focus:border-[#38bdf8] focus:ring-1 focus:ring-[#38bdf8] transition-all"
-                />
-                <button 
-                    onClick={handleSendMessage}
-                    disabled={isChatLoading}
-                    className="absolute right-2 top-2 p-1.5 bg-[#38bdf8] text-[#0f172a] rounded hover:bg-sky-400 transition disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                    <HiPaperAirplane className="rotate-90 text-sm"/>
-                </button>
-            </div>
-        </div>
-      </div>
-    </div>
+     </div>
   );
 }

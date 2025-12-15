@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { Server } from "lucide-react";
 import {
   HiOutlineHome,
   HiOutlineTemplate,
@@ -35,6 +36,9 @@ export default function DashboardLayout({
     { name: "Admin", href: "/dashboard/admin", icon: HiOutlineCog },
     { name: "Reports", href: "/dashboard/reports", icon: HiDocumentReport },
     { name: "Standards", href: "/dashboard/standards", icon: HiMiniFolder},
+    {name: "Assets", href: "/dashboard/assets",icon: Server, // or Database
+      current: false 
+    },
   ];
 
   return (
