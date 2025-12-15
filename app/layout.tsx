@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import GlobalAgent from "@/components/GlobalAgent";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
@@ -28,6 +29,7 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
         {children}
+        <GlobalAgent />
       </body>
     </html>
   );

@@ -54,7 +54,7 @@ export default function DashboardLayout({
         {/* Logo Area */}
         <div className="h-16 flex items-center px-6 border-b border-gray-800">
           <div className="text-xl font-bold tracking-tighter text-white">
-            Vibe<span className="text-[#38bdf8]">Studio</span>
+            Vibe<span className="text-[#38bdf8]">Compliance</span>
           </div>
           <button 
             className="ml-auto lg:hidden text-gray-400"
