@@ -2,26 +2,32 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { supabase } from "@/lib/supabaseClient";
+import { createClient } from "@supabase/supabase-js";
 import {
-  HiShieldCheck,
-  HiExclamation,
-  HiServer,
-  HiCheckCircle,
-  HiOutlineCheckCircle,
-  HiArrowRight,
-  HiTrendingDown,
-  HiFire,
-  HiDocumentText,
-  HiDatabase,
-  HiPuzzle
-} from "react-icons/hi";
+  ShieldCheck,
+  AlertTriangle,
+  Server,
+  CheckCircle,
+  Circle,
+  ArrowRight,
+  FileText,
+  Database,
+  Puzzle,
+  Globe,
+  Cloud,
+  Building, // New icon for Internal assets
+  Activity
+} from "lucide-react";
+
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);
 
 export default function DashboardPage() {
   const [assessments, setAssessments] = useState<any[]>([]);
   const [riskySystems, setRiskySystems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [failingControls, setFailingControls] = useState<any[]>([]);
 
   // Onboarding steps state
   const [hasIntegration, setHasIntegration] = useState<boolean>(false);
@@ -44,27 +50,31 @@ export default function DashboardPage() {
 
       if (asmData) setAssessments(asmData);
 
-      // 2. Fetch Top Risky Assets (Real data from 'systems' table)
+      // 2. Fetch Systems & Apply "Exposure-First" Logic
       const { data: sysData } = await supabase
         .from("systems")
         .select("*")
-        .order("risk_score", { ascending: false }) // High risk first
-        .limit(4);
+        .in("criticality", ["Critical", "High"]);
 
-      if (sysData) setRiskySystems(sysData);
+      if (sysData) {
+        // Define Sorting Weights
+        const exposureWeight: Record<string, number> = { "Public": 3, "External": 2, "Internal": 1, "Hybrid": 1 };
+        const criticalityWeight: Record<string, number> = { "Critical": 2, "High": 1 };
 
-      // 3. Fetch REAL Top Failing Controls (No more mocks)
-      const { data: failingControls } = await supabase
-        .from("controls")
-        .select("control_code, description, status")
-        .in("status", ["Failed", "Non-Compliant", "Missing"])
-        .limit(5);
+        const sortedRisks = sysData.sort((a, b) => {
+           // Primary Sort: Exposure
+           const expDiff = (exposureWeight[b.exposure] || 0) - (exposureWeight[a.exposure] || 0);
+           if (expDiff !== 0) return expDiff;
+           // Secondary Sort: Criticality
+           return (criticalityWeight[b.criticality] || 0) - (criticalityWeight[a.criticality] || 0);
+        }).slice(0, 5); // Top 5
 
-      if (failingControls) setFailingControls(failingControls);
+        setRiskySystems(sortedRisks);
+      }
 
       setLoading(false);
 
-      // 4. Onboarding widget: Fetch existence of each requirement as count>0
+      // 3. Onboarding widget check
       setOnboardingLoading(true);
       const [
         { count: integrationsCount },
@@ -93,32 +103,41 @@ export default function DashboardPage() {
       description: "Integrate with your existing services",
       href: "/dashboard/integrations",
       done: hasIntegration,
-      icon: <HiPuzzle className="w-6 h-6" />,
+      icon: <Puzzle className="w-6 h-6" />,
     },
     {
       name: "Upload Policy",
       description: "Add your foundational policy documents",
       href: "/dashboard/documents",
       done: hasPolicy,
-      icon: <HiDocumentText className="w-6 h-6" />,
+      icon: <FileText className="w-6 h-6" />,
     },
     {
       name: "Import Standard",
       description: "Import or select a compliance standard",
       href: "/dashboard/standards",
       done: hasStandard,
-      icon: <HiDatabase className="w-6 h-6" />,
+      icon: <Database className="w-6 h-6" />,
     },
     {
       name: "Run Assessment",
       description: "Start your first compliance assessment",
-      href: "/dashboard/assessments/new",
+      href: "/dashboard/assessments",
       done: hasAssessment,
-      icon: <HiCheckCircle className="w-6 h-6" />,
+      icon: <CheckCircle className="w-6 h-6" />,
     },
   ];
   const completedSteps = steps.filter((s) => s.done).length;
   const progressPercent = Math.round((completedSteps / steps.length) * 100);
+
+  // Helper for Icon mapping
+  const getExposureIcon = (exposure: string) => {
+    switch (exposure) {
+        case "Public": return <Globe className="w-4 h-4 text-blue-400" />;
+        case "External": return <Cloud className="w-4 h-4 text-sky-400" />;
+        default: return <Building className="w-4 h-4 text-gray-400" />;
+    }
+  };
 
   return (
     <div className="p-8 text-gray-300 space-y-8">
@@ -134,7 +153,7 @@ export default function DashboardPage() {
           ) : progressPercent === 100 ? (
             <div className="flex items-center justify-between p-6 rounded-lg bg-green-600/10 border border-green-800 my-3 mt-6">
               <div className="flex items-center gap-3">
-                <HiCheckCircle className="w-8 h-8 text-green-400" />
+                <CheckCircle className="w-8 h-8 text-green-400" />
                 <span className="text-lg font-bold text-green-300">System Fully Operational</span>
               </div>
               <span className="text-green-400 font-mono text-md">
@@ -187,9 +206,9 @@ export default function DashboardPage() {
                         {step.name}
                       </span>
                       {step.done ? (
-                        <HiCheckCircle className="w-5 h-5 ml-1 text-green-400" aria-label="completed"/>
+                        <CheckCircle className="w-5 h-5 ml-1 text-green-400" aria-label="completed"/>
                       ) : (
-                        <HiOutlineCheckCircle className="w-5 h-5 ml-1 text-[#38bdf8]" aria-label="not completed"/>
+                        <Circle className="w-5 h-5 ml-1 text-[#38bdf8]" aria-label="not completed"/>
                       )}
                     </div>
                     <div className={`text-xs ${
@@ -221,159 +240,152 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         
         {/* Compliance Score */}
-        <Link href="/dashboard/assessments/new" className="block group">
-          <div className="bg-[#1e293b]/50 border border-gray-800 rounded-xl p-6 hover:border-[#38bdf8] transition relative overflow-hidden">
-            <div className="absolute top-0 right-0 p-4 opacity-10">
-              <HiShieldCheck className="w-24 h-24 text-[#38bdf8]" />
-            </div>
-            <h3 className="text-gray-400 text-sm font-medium mb-1">Global Compliance</h3>
-            <div className="flex items-baseline gap-2">
-              <span className="text-4xl font-bold text-white">78%</span>
-              <span className="text-sm text-yellow-400">↑ 4%</span>
-            </div>
-            <div className="mt-4 w-full bg-gray-700 h-1.5 rounded-full overflow-hidden">
-              <div className="bg-[#38bdf8] w-[78%] h-full"></div>
-            </div>
-            <p className="mt-4 text-xs text-[#38bdf8] group-hover:underline flex items-center gap-1">
-              View Audit Details <HiArrowRight />
-            </p>
+        <div className="bg-[#1e293b]/50 border border-gray-800 rounded-xl p-6 hover:border-[#38bdf8] transition relative overflow-hidden group">
+          <div className="absolute top-0 right-0 p-4 opacity-10">
+            <ShieldCheck className="w-24 h-24 text-[#38bdf8]" />
           </div>
-        </Link>
+          <h3 className="text-gray-400 text-sm font-medium mb-1">Global Compliance</h3>
+          <div className="flex items-baseline gap-2">
+            <span className="text-4xl font-bold text-white">78%</span>
+            <span className="text-sm text-yellow-400">↑ 4%</span>
+          </div>
+          <div className="mt-4 w-full bg-gray-700 h-1.5 rounded-full overflow-hidden">
+            <div className="bg-[#38bdf8] w-[78%] h-full"></div>
+          </div>
+          <Link href="/dashboard/assessments" className="mt-4 text-xs text-[#38bdf8] group-hover:underline flex items-center gap-1 cursor-pointer">
+            View Audit Details <ArrowRight className="w-3 h-3" />
+          </Link>
+        </div>
 
         {/* Critical Risks */}
         <Link href="/dashboard/risks" className="block group">
           <div className="bg-[#1e293b]/50 border border-gray-800 rounded-xl p-6 hover:border-red-500 transition relative overflow-hidden">
              <div className="absolute top-0 right-0 p-4 opacity-10">
-                <HiExclamation className="w-24 h-24 text-red-500" />
-              </div>
-              <h3 className="text-gray-400 text-sm font-medium mb-1">Critical Risks</h3>
-              <div className="flex items-baseline gap-2">
-                <span className="text-4xl font-bold text-white">12</span>
-                <span className="text-sm text-red-400">+2 new</span>
-              </div>
-              <p className="mt-8 text-xs text-gray-500 group-hover:text-red-400 transition">
-                Primary source: <span className="text-gray-300">Access Control (AC)</span>
-              </p>
+                <AlertTriangle className="w-24 h-24 text-red-500" />
+             </div>
+             <h3 className="text-gray-400 text-sm font-medium mb-1">Critical Risks</h3>
+             <div className="flex items-baseline gap-2">
+               <span className="text-4xl font-bold text-white">
+                    {riskySystems.filter(s => s.criticality === 'Critical').length}
+               </span>
+               <span className="text-sm text-red-400">Action Required</span>
+             </div>
+             <p className="mt-8 text-xs text-gray-500 group-hover:text-red-400 transition">
+               Systems marked as Critical
+             </p>
           </div>
         </Link>
 
-        {/* At-Risk Assets */}
+        {/* Total At-Risk Assets */}
         <Link href="/dashboard/assets" className="block group">
           <div className="bg-[#1e293b]/50 border border-gray-800 rounded-xl p-6 hover:border-purple-500 transition relative overflow-hidden">
              <div className="absolute top-0 right-0 p-4 opacity-10">
-                <HiServer className="w-24 h-24 text-purple-500" />
-              </div>
-              <h3 className="text-gray-400 text-sm font-medium mb-1">At-Risk Assets</h3>
-              <div className="flex items-baseline gap-2">
-                <span className="text-4xl font-bold text-white">{riskySystems.length}</span>
-                <span className="text-sm text-yellow-500">Need Attention</span>
-              </div>
-               <p className="mt-8 text-xs text-gray-500 group-hover:text-purple-400 transition">
-                3 Production, 1 Dev
-              </p>
+                <Server className="w-24 h-24 text-purple-500" />
+             </div>
+             <h3 className="text-gray-400 text-sm font-medium mb-1">Total At-Risk Assets</h3>
+             <div className="flex items-baseline gap-2">
+               <span className="text-4xl font-bold text-white">{riskySystems.length}</span>
+               <span className="text-sm text-yellow-500">High or Critical</span>
+             </div>
+              <p className="mt-8 text-xs text-gray-500 group-hover:text-purple-400 transition">
+               View Asset Inventory
+             </p>
           </div>
         </Link>
       </div>
 
-      {/* RISK LANDSCAPE (The Missing Row) */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      {/* MAIN CONTENT GRID: 66% Assessments | 33% Exposures */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         
-        {/* LEFT: Top Risky Applications */}
-        <div className="bg-[#1e293b]/50 border border-gray-800 rounded-xl p-6">
-            <h2 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
-                <HiFire className="text-red-500" /> Top Risky Applications
+        {/* LEFT COL (66%): Active Assessments */}
+        <div className="lg:col-span-2">
+            <h2 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
+                <Activity className="w-5 h-5 text-[#38bdf8]" /> Active Assessments
             </h2>
-            <div className="space-y-3">
-                {riskySystems.map(sys => (
-                    <div key={sys.id} className="flex items-center justify-between p-3 bg-gray-900/50 rounded border border-gray-800">
-                        <div className="flex items-center gap-3">
-                            <div className={`w-2 h-2 rounded-full ${sys.environment === 'Production' ? 'bg-red-500' : 'bg-gray-500'}`}></div>
-                            <div>
-                                <p className="text-sm font-medium text-white">{sys.name}</p>
-                                <p className="text-xs text-gray-500">{sys.type} • {sys.environment}</p>
-                            </div>
-                        </div>
-                        <div className="text-right">
-                            <span className="text-sm font-bold text-red-400">Score: {sys.risk_score}</span>
-                        </div>
-                    </div>
-                ))}
-                {riskySystems.length === 0 && <p className="text-gray-500 text-sm">No risky systems found.</p>}
-            </div>
-            <button className="w-full mt-4 py-2 text-xs font-medium text-gray-400 hover:text-white border border-gray-800 rounded hover:bg-gray-800 transition">
-                View All Assets
-            </button>
-        </div>
-
-        {/* RIGHT: Top Failing Controls (Mocked for MVP visualization) */}
-        <div className="bg-[#1e293b]/50 border border-gray-800 rounded-xl p-6">
-            <h2 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
-                <HiTrendingDown className="text-yellow-500" /> Top Failing Controls
-            </h2>
-            <div className="space-y-3">
-                {!failingControls || failingControls.length === 0 ? (
-                   <p className="text-gray-500 text-sm italic">All controls are compliant. Good job!</p>
+            <div className="bg-[#1e293b]/30 border border-gray-800 rounded-xl overflow-hidden min-h-[300px]">
+                {loading ? (
+                <div className="p-8 text-center text-gray-500">Loading assessments...</div>
+                ) : assessments.length === 0 ? (
+                <div className="p-12 text-center">
+                    <p className="text-gray-400 mb-4">No assessments found.</p>
+                    <Link href="/dashboard/assessments" className="px-4 py-2 bg-[#38bdf8] text-[#0f172a] font-bold rounded hover:bg-sky-400">
+                    Start Your First Audit
+                    </Link>
+                </div>
                 ) : (
-                   // Simple aggregation (in a real app, we'd use a SQL View for counts)
-                   failingControls.map((ctrl, idx) => (
-                    <div key={idx} className="p-3 bg-gray-900/50 rounded border border-gray-800 hover:border-red-500/50 transition cursor-pointer group">
-                        <div className="flex justify-between mb-1">
-                            <span className="text-xs font-mono text-red-400 bg-red-900/20 px-1.5 py-0.5 rounded">{ctrl.control_code}</span>
-                            <span className="text-xs text-red-500 font-bold">Action Required</span>
+                <div className="divide-y divide-gray-800">
+                    {assessments.map((asm) => (
+                    <Link 
+                        key={asm.id} 
+                        href={`/dashboard/assessments/${asm.id}`}
+                        className="block p-4 hover:bg-gray-800/50 transition flex items-center justify-between group"
+                    >
+                        <div className="flex items-center gap-4">
+                        <div className={`p-2 rounded-lg ${asm.standard?.includes('CMMC') ? 'bg-blue-900/20 text-blue-400' : 'bg-purple-900/20 text-purple-400'}`}>
+                            <CheckCircle className="w-5 h-5" />
                         </div>
-                        <p className="text-sm text-gray-300 group-hover:text-white truncate">{ctrl.description}</p>
-                    </div>
-                   ))
+                        <div>
+                            <h4 className="font-bold text-gray-200 group-hover:text-white transition">
+                                {asm.title.replace("AGENT: ", "")}
+                            </h4>
+                            <p className="text-xs text-gray-500">{asm.standard} • {new Date(asm.created_at).toLocaleDateString()}</p>
+                        </div>
+                        </div>
+                        <div className="flex items-center gap-4">
+                        <div className="text-right hidden sm:block">
+                            <p className="text-xs text-gray-400">Progress</p>
+                            <p className="text-sm font-mono text-[#38bdf8]">{asm.progress || 0}%</p>
+                        </div>
+                        <ArrowRight className="text-gray-600 group-hover:text-white w-5 h-5" />
+                        </div>
+                    </Link>
+                    ))}
+                </div>
                 )}
             </div>
-            <Link href="/dashboard/assessments" className="block w-full mt-4 py-2 text-center text-xs font-medium text-gray-400 hover:text-white border border-gray-800 rounded hover:bg-gray-800 transition">
-                View All Audits
-            </Link>
         </div>
-      </div>
 
-      {/* RECENT ASSESSMENTS */}
-      <div>
-        <h2 className="text-xl font-bold text-white mb-4">Active Assessments</h2>
-        <div className="bg-[#1e293b]/30 border border-gray-800 rounded-xl overflow-hidden">
-            {loading ? (
-            <div className="p-8 text-center text-gray-500">Loading assessments...</div>
-            ) : assessments.length === 0 ? (
-            <div className="p-12 text-center">
-                <p className="text-gray-400 mb-4">No assessments found.</p>
-                <Link href="/dashboard/assessments/new" className="px-4 py-2 bg-[#38bdf8] text-[#0f172a] font-bold rounded hover:bg-sky-400">
-                Start Your First Audit
+        {/* RIGHT COL (33%): Top Priority Exposures */}
+        <div className="lg:col-span-1">
+            <h2 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
+                <AlertTriangle className="text-red-500 w-5 h-5" /> Priority Exposures
+            </h2>
+            <div className="bg-[#1e293b]/50 border border-gray-800 rounded-xl p-6 min-h-[300px]">
+                <p className="text-xs text-gray-400 mb-4">
+                    Sorted by Exposure (Public First) & Criticality.
+                </p>
+                <div className="space-y-3">
+                    {riskySystems.map(sys => (
+                        <div key={sys.id} className="flex items-center justify-between p-3 bg-gray-900/50 rounded border border-gray-800 hover:border-gray-600 transition">
+                            <div className="flex items-center gap-3">
+                                {/* Icon based on Exposure */}
+                                <div className="p-2 bg-gray-800 rounded">
+                                    {getExposureIcon(sys.exposure)}
+                                </div>
+                                <div>
+                                    <p className="text-sm font-medium text-white truncate max-w-[120px]">{sys.name}</p>
+                                    <div className="flex items-center gap-1 text-xs text-gray-500">
+                                        {sys.exposure}
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="text-right">
+                                <span className={`text-xs font-bold px-2 py-1 rounded ${
+                                    sys.criticality === 'Critical' ? 'bg-red-900/30 text-red-400' : 'bg-orange-900/30 text-orange-400'
+                                }`}>
+                                    {sys.criticality}
+                                </span>
+                            </div>
+                        </div>
+                    ))}
+                    {riskySystems.length === 0 && <p className="text-gray-500 text-sm">No critical exposures found.</p>}
+                </div>
+                <Link href="/dashboard/assets" className="block w-full text-center mt-6 py-2 text-xs font-medium text-gray-400 hover:text-white border border-gray-800 rounded hover:bg-gray-800 transition">
+                    View Asset Inventory
                 </Link>
             </div>
-            ) : (
-            <div className="divide-y divide-gray-800">
-                {assessments.map((asm) => (
-                <Link 
-                    key={asm.id} 
-                    href={`/dashboard/assessments/${asm.id}`}
-                    className="block p-4 hover:bg-gray-800/50 transition flex items-center justify-between group"
-                >
-                    <div className="flex items-center gap-4">
-                    <div className={`p-2 rounded-lg ${asm.standard?.includes('CMMC') ? 'bg-blue-900/20 text-blue-400' : 'bg-purple-900/20 text-purple-400'}`}>
-                        <HiCheckCircle className="w-5 h-5" />
-                    </div>
-                    <div>
-                        <h4 className="font-bold text-gray-200 group-hover:text-white transition">{asm.title}</h4>
-                        <p className="text-xs text-gray-500">{asm.standard} • Updated today</p>
-                    </div>
-                    </div>
-                    <div className="flex items-center gap-4">
-                    <div className="text-right hidden sm:block">
-                        <p className="text-xs text-gray-400">Progress</p>
-                        <p className="text-sm font-mono text-[#38bdf8]">{asm.progress || 0}%</p>
-                    </div>
-                    <HiArrowRight className="text-gray-600 group-hover:text-white" />
-                    </div>
-                </Link>
-                ))}
-            </div>
-            )}
         </div>
+
       </div>
     </div>
   );

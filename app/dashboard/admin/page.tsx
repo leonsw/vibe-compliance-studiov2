@@ -1,251 +1,225 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { 
-  HiOutlineCog, 
-  HiTrash, 
-  HiRefresh, 
-  HiMail, 
-  HiPlus,
-  HiUser,
-  HiX 
-} from "react-icons/hi";
+import { Plus, Mail, Shield, Trash2, CheckCircle, Clock } from "lucide-react";
+
+type User = {
+  id: string;
+  email: string;
+  created_at: string;
+  last_sign_in_at?: string;
+  user_metadata: {
+    full_name?: string;
+    role?: string;
+  };
+};
 
 export default function AdminPage() {
-  const [users, setUsers] = useState<any[]>([]);
+  const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  
+  // Invite Form State
   const [inviteEmail, setInviteEmail] = useState("");
-  const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
-  const [actionLoading, setActionLoading] = useState(false);
-
-  // 1. Fetch Users
-  const fetchUsers = async () => {
-    setLoading(true);
-    try {
-      const res = await fetch('/api/admin/users');
-      const data = await res.json();
-      if (data.users) setUsers(data.users);
-    } catch (err) {
-      console.error("Failed to fetch users:", err);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const [inviteName, setInviteName] = useState("");
+  const [inviteRole, setInviteRole] = useState("user");
+  const [inviting, setInviting] = useState(false);
 
   useEffect(() => {
     fetchUsers();
   }, []);
 
-  // 2. Update Role (The Dropdown Logic)
-  const handleRoleChange = async (userId: string, newRole: string) => {
-    // Optimistic Update
-    setUsers(prev => prev.map(u => 
-        u.id === userId 
-          ? { ...u, app_metadata: { ...u.app_metadata, role: newRole } }
-          : u
-    ));
-
+  async function fetchUsers() {
     try {
-      const res = await fetch('/api/admin/users', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId, role: newRole })
-      });
+      setLoading(true);
+      const res = await fetch("/api/admin/users");
+      const data = await res.json();
+      
+      console.log("Admin API Response:", data); // Debug Log
 
-      if (!res.ok) throw new Error("Update failed");
-      alert(`Role updated to: ${newRole}`);
-      
-    } catch (err: any) {
-      alert("Error updating role: " + err.message);
-      fetchUsers(); // Revert on error
-    }
-  };
-
-  // 3. Invite User
-  const handleInvite = async () => {
-    if (!inviteEmail) return;
-    setActionLoading(true);
-    try {
-      const res = await fetch('/api/admin/users', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: inviteEmail })
-      });
-      
-      if (!res.ok) throw new Error("Invite failed");
-      
-      alert(`Invitation sent to ${inviteEmail}`);
-      setIsInviteModalOpen(false);
-      setInviteEmail("");
-      fetchUsers(); 
-    } catch (err: any) {
-      alert("Error: " + err.message);
+      if (Array.isArray(data)) {
+        setUsers(data); // Handle Array Response
+      } else if (data.users && Array.isArray(data.users)) {
+        setUsers(data.users); // Handle Object Response
+      } else {
+        console.error("Unexpected data format:", data);
+        setUsers([]);
+      }
+    } catch (error) {
+      console.error("Error fetching users:", error);
     } finally {
-      setActionLoading(false);
+      setLoading(false);
     }
-  };
+  }
 
-  // 4. Delete User
-  const handleDelete = async (userId: string, email: string) => {
-    if (!confirm(`Are you sure you want to delete ${email}? This cannot be undone.`)) return;
-    
+  async function handleInvite(e: React.FormEvent) {
+    e.preventDefault();
+    setInviting(true);
+
     try {
-      const res = await fetch('/api/admin/users', {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId })
+      const res = await fetch("/api/admin/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          email: inviteEmail, 
+          fullName: inviteName,
+          role: inviteRole 
+        }),
       });
 
-      if (!res.ok) throw new Error("Delete failed");
-      
-      fetchUsers(); 
-    } catch (err: any) {
-      alert("Error: " + err.message);
+      const result = await res.json();
+
+      if (!res.ok) throw new Error(result.error || "Failed to invite");
+
+      alert("Invite sent successfully!");
+      setIsModalOpen(false);
+      setInviteEmail("");
+      setInviteName("");
+      fetchUsers(); // Refresh list
+
+    } catch (error: any) {
+      alert(error.message);
+    } finally {
+      setInviting(false);
     }
-  };
+  }
 
   return (
-    <div className="p-8 text-gray-300 h-full overflow-y-auto">
-      {/* Header */}
+    <div className="p-8 max-w-7xl mx-auto">
       <div className="flex justify-between items-center mb-8">
         <div>
-          <h1 className="text-2xl font-bold text-white mb-2 flex items-center gap-2">
-            <HiOutlineCog className="text-[#38bdf8]" /> Admin Portal
-          </h1>
-          <p className="text-sm text-gray-400">Manage users, roles, and system permissions.</p>
+          <h1 className="text-3xl font-bold text-gray-900">User Management</h1>
+          <p className="text-gray-500 mt-1">Manage team access and permissions.</p>
         </div>
-        <div className="flex gap-3">
-            <button 
-                onClick={fetchUsers} 
-                className="p-2 bg-gray-800 hover:bg-gray-700 text-white rounded-lg transition"
-                title="Refresh List"
-            >
-                <HiRefresh />
-            </button>
-            <button 
-                onClick={() => setIsInviteModalOpen(true)}
-                className="flex items-center gap-2 px-4 py-2 bg-[#38bdf8] text-[#0f172a] font-bold rounded-lg hover:bg-sky-400 transition"
-            >
-                <HiPlus /> Invite User
-            </button>
-        </div>
+        <button 
+          onClick={() => setIsModalOpen(true)}
+          className="bg-black text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-gray-800 transition"
+        >
+          <Plus className="w-4 h-4" /> Invite User
+        </button>
       </div>
 
-      {/* Tabs (Updated with Audit Log) */}
-      <div className="flex gap-6 border-b border-gray-800 mb-6 text-sm font-medium">
-        <button className="pb-3 border-b-2 border-[#38bdf8] text-white">Users</button>
-        <button className="pb-3 text-gray-500 hover:text-gray-300 cursor-not-allowed">Roles & Permissions (Pro)</button>
-        <button className="pb-3 text-gray-500 hover:text-gray-300 cursor-not-allowed">Audit Log (Ent)</button>
-      </div>
-
-      {/* User Table */}
-      <div className="bg-[#1e293b]/50 border border-gray-800 rounded-xl overflow-hidden shadow-xl">
-        <table className="w-full text-left text-sm">
-          <thead className="bg-gray-900/50 text-gray-400 uppercase font-medium">
-            <tr>
-              <th className="px-6 py-4">User</th>
-              <th className="px-6 py-4">Role</th>
-              <th className="px-6 py-4">Last Sign In</th>
-              <th className="px-6 py-4 text-right">Actions</th>
+      <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
+        <table className="w-full text-left border-collapse">
+          <thead>
+            <tr className="bg-gray-50 border-b border-gray-100 text-xs uppercase text-gray-500 font-semibold">
+              <th className="p-4">User</th>
+              <th className="p-4">Role</th>
+              <th className="p-4">Status</th>
+              <th className="p-4">Last Active</th>
+              <th className="p-4 text-right">Actions</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-800">
+          <tbody>
             {loading ? (
-                <tr>
-                    <td colSpan={4} className="px-6 py-12 text-center text-gray-500">Loading users...</td>
-                </tr>
+              <tr><td colSpan={5} className="p-8 text-center text-gray-500">Loading users...</td></tr>
             ) : users.length === 0 ? (
-                <tr>
-                    <td colSpan={4} className="px-6 py-12 text-center text-gray-500">No users found.</td>
-                </tr>
+              <tr><td colSpan={5} className="p-8 text-center text-gray-500">No users found.</td></tr>
             ) : (
-                users.map((user) => (
-                    <tr key={user.id} className="hover:bg-gray-800/30 transition">
-                        {/* 1. User Info */}
-                        <td className="px-6 py-4">
-                            <div className="flex items-center gap-3">
-                                <div className="w-8 h-8 rounded-full bg-gray-700 flex items-center justify-center text-white font-bold">
-                                    {user.email ? user.email[0].toUpperCase() : '?'}
-                                </div>
-                                <div>
-                                    <div className="font-medium text-white">{user.email}</div>
-                                    <div className="text-xs text-gray-500">
-                                        {/* DEBUG: Show the raw role to see if data exists */}
-                                        Role: {user.app_metadata?.role || 'None detected'}
-                                    </div>
-                                </div>
-                            </div>
-                        </td>
-
-                        {/* 2. ROLE DROPDOWN (High Visibility Config) */}
-                        <td className="px-6 py-4">
-                            <div className="relative">
-                                <select 
-                                    value={user.app_metadata?.role || 'User'}
-                                    onChange={(e) => handleRoleChange(user.id, e.target.value)}
-                                    className="appearance-none bg-[#0f172a] border border-[#38bdf8] text-white text-sm rounded-md py-2 pl-3 pr-8 focus:outline-none focus:ring-2 focus:ring-[#38bdf8] cursor-pointer shadow-lg"
-                                >
-                                    <option value="User">User</option>
-                                    <option value="Auditor">Auditor</option>
-                                    <option value="Admin">Admin</option>
-                                </select>
-                                {/* Chevron Icon to make it obvious it's a dropdown */}
-                                <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-[#38bdf8]">
-                                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
-                                </div>
-                            </div>
-                        </td>
-
-                        {/* 3. Last Sign In */}
-                        <td className="px-6 py-4 text-gray-400 font-mono text-xs">
-                            {user.last_sign_in_at ? new Date(user.last_sign_in_at).toLocaleDateString() : 'Never'}
-                        </td>
-
-                        {/* 4. Actions */}
-                        <td className="px-6 py-4 text-right">
-                            <button 
-                                onClick={() => handleDelete(user.id, user.email)}
-                                className="p-2 text-gray-500 hover:text-red-400 hover:bg-red-900/20 rounded transition"
-                                title="Delete User"
-                            >
-                                <HiTrash />
-                            </button>
-                        </td>
-                    </tr>
-                ))
+              users.map((user) => (
+                <tr key={user.id} className="border-b border-gray-50 hover:bg-gray-50 transition">
+                  <td className="p-4">
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center font-bold text-xs">
+                        {(user.user_metadata?.full_name?.[0] || user.email[0]).toUpperCase()}
+                      </div>
+                      <div>
+                        <div className="font-medium text-gray-900">{user.user_metadata?.full_name || "Unknown"}</div>
+                        <div className="text-sm text-gray-500">{user.email}</div>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="p-4">
+                    <span className="px-2 py-1 rounded text-xs font-medium bg-gray-100 text-gray-600 border border-gray-200 capitalize">
+                      {user.user_metadata?.role || "user"}
+                    </span>
+                  </td>
+                  <td className="p-4">
+                    {user.last_sign_in_at ? (
+                      <span className="flex items-center gap-1.5 text-xs font-medium text-green-700 bg-green-50 px-2 py-1 rounded-full w-fit">
+                        <CheckCircle className="w-3 h-3" /> Active
+                      </span>
+                    ) : (
+                      <span className="flex items-center gap-1.5 text-xs font-medium text-orange-700 bg-orange-50 px-2 py-1 rounded-full w-fit">
+                        <Clock className="w-3 h-3" /> Invited
+                      </span>
+                    )}
+                  </td>
+                  <td className="p-4 text-sm text-gray-500">
+                    {user.last_sign_in_at 
+                      ? new Date(user.last_sign_in_at).toLocaleDateString() 
+                      : "Never"}
+                  </td>
+                  <td className="p-4 text-right">
+                    <button className="text-gray-400 hover:text-red-600 transition">
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </td>
+                </tr>
+              ))
             )}
           </tbody>
         </table>
       </div>
 
       {/* Invite Modal */}
-      {isInviteModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-            <div className="bg-[#0f172a] border border-gray-700 rounded-xl w-full max-w-md p-6 relative">
-                <button 
-                    onClick={() => setIsInviteModalOpen(false)}
-                    className="absolute top-4 right-4 text-gray-500 hover:text-white"
-                >
-                    <HiX />
-                </button>
-                <h2 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
-                    <HiMail className="text-[#38bdf8]"/> Invite Team Member
-                </h2>
+      {isModalOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl max-w-md w-full p-6 shadow-xl">
+            <h2 className="text-xl font-bold mb-4">Invite Team Member</h2>
+            <form onSubmit={handleInvite} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium mb-1">Full Name</label>
                 <input 
-                    type="email" 
-                    placeholder="colleague@company.com"
-                    value={inviteEmail}
-                    onChange={(e) => setInviteEmail(e.target.value)}
-                    className="w-full bg-gray-900 border border-gray-700 rounded p-3 text-white mb-4 focus:border-[#38bdf8] outline-none"
+                  required 
+                  value={inviteName}
+                  onChange={(e) => setInviteName(e.target.value)}
+                  className="w-full p-2 border rounded" 
+                  placeholder="Jane Doe" 
                 />
-                <button 
-                    onClick={handleInvite}
-                    disabled={actionLoading || !inviteEmail}
-                    className="w-full py-3 bg-[#38bdf8] text-[#0f172a] font-bold rounded hover:bg-sky-400 transition disabled:opacity-50"
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">Email Address</label>
+                <input 
+                  required 
+                  type="email" 
+                  value={inviteEmail}
+                  onChange={(e) => setInviteEmail(e.target.value)}
+                  className="w-full p-2 border rounded" 
+                  placeholder="jane@company.com" 
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">Role</label>
+                <select 
+                  value={inviteRole}
+                  onChange={(e) => setInviteRole(e.target.value)}
+                  className="w-full p-2 border rounded bg-white"
                 >
-                    {actionLoading ? "Sending..." : "Send Invitation"}
+                  <option value="user">User (Standard)</option>
+                  <option value="admin">Admin (Full Access)</option>
+                  <option value="auditor">Auditor (Read Only)</option>
+                </select>
+              </div>
+              
+              <div className="flex justify-end gap-3 mt-6">
+                <button 
+                  type="button" 
+                  onClick={() => setIsModalOpen(false)} 
+                  className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded"
+                >
+                  Cancel
                 </button>
-            </div>
+                <button 
+                  type="submit" 
+                  disabled={inviting}
+                  className="px-4 py-2 bg-black text-white rounded hover:bg-gray-800 disabled:opacity-50"
+                >
+                  {inviting ? "Sending..." : "Send Invite"}
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
     </div>

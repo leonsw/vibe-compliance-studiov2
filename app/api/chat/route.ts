@@ -5,48 +5,44 @@ import { z } from "zod";
 
 export const maxDuration = 60;
 
-// Defines the "Intent" we want to detect
+// 1. Expanded Intent Schema
 const IntentSchema = z.object({
-  action: z.enum(["create_assessment", "chat"]).describe("The user's intent."),
-  standard_name: z.string().optional().describe("Standard name if creating assessment."),
-  asset_name: z.string().optional().describe("System/Asset name if creating assessment."),
+  action: z.enum(["create_assessment", "create_bulk_assessment", "chat"])
+    .describe("The user's intent. Use 'create_bulk_assessment' if they say 'all apps', 'in-scope systems', or plural."),
+  standard_name: z.string().optional().describe("Standard name (e.g. CMMC, PCI)."),
+  asset_name: z.string().optional().describe("System name (only for single assessment)."),
 });
 
-// Helper Function: The "Tool" Logic (Decoupled from the AI SDK)
-async function createAssessment(standard_name: string, asset_name: string) {
-  const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  );
+// Helper: Create Single Assessment
+async function createAssessment(supabase: any, standard: any, system: any) {
+  // Check if active assessment already exists to avoid duplicates (Optional safety)
+  const { data: existing } = await supabase
+    .from("assessments")
+    .select("id")
+    .eq("system_id", system.id)
+    .eq("standard", standard.name)
+    .eq("status", "In Progress")
+    .maybeSingle();
 
-  // 1. Find Standard
-  const { data: stds } = await supabase
-    .from("standards_library")
-    .select("id, name")
-    .ilike("name", `%${standard_name}%`)
-    .limit(1);
-  if (!stds?.length) return `Error: Standard "${standard_name}" not found.`;
-  const standard = stds[0];
+  if (existing) return `Skipped ${system.name} (Already In Progress)`;
 
-  // 2. Find System
-  const { data: sys } = await supabase
-    .from("systems")
-    .select("id, name")
-    .ilike("name", `%${asset_name}%`)
-    .limit(1);
-  if (!sys?.length) return `Error: System "${asset_name}" not found.`;
-  const system = sys[0];
-
-  // 3. Create Assessment
+  // Create Assessment
   const title = `AGENT: ${standard.name} on ${system.name}`;
   const { data: assessment, error } = await supabase
     .from("assessments")
-    .insert({ title, system_id: system.id, standard: standard.name, status: "In Progress", progress: 0 })
-    .select().single();
+    .insert({ 
+      title, 
+      system_id: system.id, 
+      standard: standard.name, 
+      status: "In Progress", 
+      progress: 0 
+    })
+    .select()
+    .single();
   
-  if (error) return `Error creating assessment: ${error.message}`;
+  if (error) return `Failed ${system.name}: ${error.message}`;
 
-  // 4. Clone Controls
+  // Clone Controls
   const { data: masters } = await supabase
     .from("master_controls")
     .select("*")
@@ -63,41 +59,92 @@ async function createAssessment(standard_name: string, asset_name: string) {
     await supabase.from("controls").insert(controls);
   }
 
-  return `SUCCESS: Created Assessment #${assessment.id} for ${standard.name} on ${system.name}.`;
+  return `Started ${system.name}`;
 }
 
+// 2. Main Handler
 export async function POST(req: Request) {
   try {
     const { messages }: { messages: CoreMessage[] } = await req.json();
     const lastMessage = messages[messages.length - 1].content as string;
 
-    // STEP 1: Determine Intent (Is this a tool call or just chat?)
-    // We use a fast call to check if the user is trying to start an assessment
+    // A. Detect Intent
     const { object: intent } = await generateObject({
       model: openai("gpt-4o"),
       schema: IntentSchema,
-      prompt: `Analyze the user's last message: "${lastMessage}". 
-               If they want to start/launch/begin an audit or assessment, extract the standard and asset names.
-               Otherwise, classify as "chat".`,
+      prompt: `Analyze: "${lastMessage}". 
+               - If user wants to audit ONE specific app -> 'create_assessment'.
+               - If user wants to audit ALL apps, or "in-scope" apps -> 'create_bulk_assessment'.
+               - Otherwise -> 'chat'.`,
     });
 
     let toolResult = "";
 
-    // STEP 2: Execute Logic Manually (No "Tools" array to break)
-    if (intent.action === "create_assessment" && intent.standard_name && intent.asset_name) {
-      console.log(`[Agent] Manual Trigger: ${intent.standard_name} on ${intent.asset_name}`);
-      toolResult = await createAssessment(intent.standard_name, intent.asset_name);
+    // B. Execute Logic
+    if (intent.action !== "chat" && intent.standard_name) {
+      const supabase = createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.SUPABASE_SERVICE_ROLE_KEY!
+      );
+
+      // 1. Find Standard
+      const { data: stds } = await supabase
+        .from("standards_library")
+        .select("id, name")
+        .ilike("name", `%${intent.standard_name}%`)
+        .limit(1);
+
+      if (!stds?.length) {
+        toolResult = `Error: Standard "${intent.standard_name}" not found.`;
+      } else {
+        const standard = stds[0];
+
+        // 2. BULK MODE
+        if (intent.action === "create_bulk_assessment") {
+            console.log(`[Agent] Bulk Trigger: ${standard.name}`);
+            
+            // Find systems that have this standard in their tags
+            // Note: applicable_standards is a text array in DB
+            const { data: systems } = await supabase
+                .from("systems")
+                .select("*")
+                .contains("applicable_standards", [standard.name]);
+
+            if (!systems || systems.length === 0) {
+                toolResult = `Found 0 systems tagged with "${standard.name}". Please go to Assets and tag them first.`;
+            } else {
+                const results = await Promise.all(systems.map(sys => createAssessment(supabase, standard, sys)));
+                toolResult = `BULK OPERATION COMPLETE:\n- ${results.join("\n- ")}`;
+            }
+        } 
+        
+        // 3. SINGLE MODE
+        else if (intent.action === "create_assessment" && intent.asset_name) {
+            const { data: sys } = await supabase
+                .from("systems")
+                .select("*")
+                .ilike("name", `%${intent.asset_name}%`)
+                .limit(1);
+            
+            if (!sys?.length) {
+                toolResult = `Error: Asset "${intent.asset_name}" not found.`;
+            } else {
+                toolResult = await createAssessment(supabase, standard, sys[0]);
+            }
+        }
+      }
     }
 
-    // STEP 3: Generate Final Response
-    // We inject the tool result as a "System Note" so the AI knows what happened.
+    // C. Reply to User
     const systemContext = `
       You are VibeBot, an AI Compliance Officer.
       
-      ${toolResult ? `IMPORTANT UPDATE: You just performed an action. Result: "${toolResult}". Tell the user this news.` : ""}
+      ${toolResult ? `SYSTEM UPDATE: \n${toolResult}` : ""}
       
-      If the user asked to start an assessment and you see a SUCCESS message above, confirm it excitedly.
-      If you see an ERROR message, explain what went wrong.
+      Instructions:
+      1. If you just ran a Bulk Operation, list the systems that were started.
+      2. If you found 0 systems, politely tell the user to go to the Assets page and tag their apps with the standard.
+      3. Be concise and professional.
     `;
 
     const result = await streamText({

@@ -3,14 +3,15 @@ import { createClient } from "@supabase/supabase-js";
 
 export async function POST(req: Request) {
   try {
-    const { title, description, controlId } = await req.json();
+    // 1. We now expect 'riskId' (Optional)
+    const { title, description, controlId, riskId } = await req.json();
 
-    // 1. Get Jira Credentials from Database
     const supabase = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
     );
 
+    // 2. Get Credentials
     const { data: integration } = await supabase
       .from("integrations")
       .select("*")
@@ -23,31 +24,27 @@ export async function POST(req: Request) {
 
     const { domain, email, projectKey } = integration.config;
     const token = integration.encrypted_key;
-
-    // 2. Construct Basic Auth Header
     const authString = Buffer.from(`${email}:${token}`).toString('base64');
 
-    // 3. Call Jira API
+    // 3. Create Ticket in Jira
     const jiraUrl = `https://${domain}/rest/api/3/issue`;
     const payload = {
       fields: {
         project: { key: projectKey },
-        summary: `[Vibe] Compliance Failure: ${title}`,
+        summary: `[Vibe] ${title}`,
         description: {
           type: "doc",
           version: 1,
           content: [
             {
               type: "paragraph",
-              content: [{ type: "text", text: description || "No description." }]
+              content: [{ type: "text", text: description || "Remediation required." }]
             }
           ]
         },
         issuetype: { name: "Task" }
       }
     };
-
-    console.log(`Creating Jira Ticket in ${domain} (Project: ${projectKey})...`);
 
     const response = await fetch(jiraUrl, {
       method: "POST",
@@ -62,21 +59,31 @@ export async function POST(req: Request) {
     const data = await response.json();
 
     if (!response.ok) {
-        console.error("Jira API Error:", JSON.stringify(data));
         throw new Error(JSON.stringify(data.errors || data.errorMessages));
     }
 
-    const ticketKey = data.key; // e.g. "SEC-42"
+    const ticketKey = data.key; 
     const ticketUrl = `https://${domain}/browse/${ticketKey}`;
 
-    // 4. Save Ticket as Evidence (So we can track it)
-    await supabase.from("evidence").insert({
-        control_id: controlId,
-        name: `Remediation Ticket: ${ticketKey}`,
-        source_type: 'Integration',
-        status: 'Pending', // Pending = Open Ticket
-        url: ticketUrl
-    });
+    // 4. Save as Evidence (Legacy support)
+    if (controlId) {
+        await supabase.from("evidence").insert({
+            control_id: controlId,
+            name: `Remediation Ticket: ${ticketKey}`,
+            source_type: 'Integration',
+            status: 'Pending',
+            url: ticketUrl
+        });
+    }
+
+    // 5. NEW: Link to Risk Record
+    if (riskId) {
+        await supabase.from("risks").update({
+            jira_ticket_key: ticketKey,
+            jira_ticket_url: ticketUrl,
+            status: 'In Review' // Auto-update status since work has started
+        }).eq("id", riskId);
+    }
 
     return NextResponse.json({ success: true, ticketKey, ticketUrl });
 

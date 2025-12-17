@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import { useRouter } from "next/navigation";
 import { 
   HiUpload, 
   HiLibrary, 
@@ -14,6 +15,7 @@ export default function StandardsLibrary() {
   const [standards, setStandards] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [isUploading, setIsUploading] = useState(false);
+  const router = useRouter();
   
   // Upload State
   const [file, setFile] = useState<File | null>(null);

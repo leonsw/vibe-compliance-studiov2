@@ -3,18 +3,20 @@
 import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Server } from "lucide-react";
-import {
-  HiOutlineHome,
-  HiOutlineTemplate,
-  HiOutlineFolderOpen,
-  HiOutlineLightningBolt,
-  HiOutlineCog,
-  HiOutlineUserCircle,
-  HiMenuAlt2,
-  HiX,
-  HiDocumentReport
-} from "react-icons/hi";
+import { 
+  LayoutDashboard, 
+  Server, 
+  AlertTriangle, 
+  ClipboardCheck, 
+  Calendar, 
+  BookOpen, 
+  FileText, 
+  BarChart3, 
+  Zap, 
+  Settings,
+  Menu,
+  X 
+} from "lucide-react";
 import { HiMiniFolder } from "react-icons/hi2";
 
 export default function DashboardLayout({
@@ -27,19 +29,28 @@ export default function DashboardLayout({
 
   // Navigation Config
   const navigation = [
-    { name: "Dashboard", href: "/dashboard", icon: HiOutlineHome },
-    { name: "Documents", href: "/dashboard/documents", icon: HiOutlineFolderOpen },
-    { name: "Assessment Schedules", href: "/dashboard/schedules", icon: HiOutlineFolderOpen }, // New item
-    { name: "Integrations", href: "/dashboard/integrations", icon: HiOutlineLightningBolt },
-    // We will add the Wizard link here soon
-    { name: "Manage Assessments", href: "/dashboard/assessments", icon: HiOutlineTemplate }, 
-    { name: "Admin", href: "/dashboard/admin", icon: HiOutlineCog },
-    { name: "Reports", href: "/dashboard/reports", icon: HiDocumentReport },
-    { name: "Standards", href: "/dashboard/standards", icon: HiMiniFolder},
-    {name: "Assets", href: "/dashboard/assets",icon: Server, // or Database
-      current: false 
-    },
-  ];
+    // 1. The Command Center
+    { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
+
+    // 2. The Foundation (What are we protecting?)
+    { name: "Asset Inventory", href: "/dashboard/assets", icon: Server },
+
+    // 3. The "Why" (What is wrong?)
+    { name: "Risk Register", href: "/dashboard/risks", icon: AlertTriangle },
+
+    // 4. The "How" (Execution)
+    { name: "Assessments", href: "/dashboard/assessments", icon: ClipboardCheck },
+    { name: "Schedules", href: "/dashboard/schedules", icon: Calendar },
+    { name: "Standards Library", href: "/dashboard/standards", icon: BookOpen },
+
+    // 5. The "Proof" (Knowledge Base)
+    { name: "Documents & Policy", href: "/dashboard/documents", icon: FileText },
+    { name: "Reports", href: "/dashboard/reports", icon: BarChart3 },
+
+    // 6. Configuration (System)
+    { name: "Integrations", href: "/dashboard/integrations", icon: Zap }, // "Zap" is the Lightning Bolt
+    { name: "Admin Settings", href: "/dashboard/admin", icon: Settings },
+];
 
   return (
     <div className="min-h-screen bg-[#0f172a] flex">
@@ -64,7 +75,7 @@ export default function DashboardLayout({
             className="ml-auto lg:hidden text-gray-400"
             onClick={() => setIsMobileMenuOpen(false)}
           >
-            <HiX className="w-6 h-6" />
+            <X className="w-6 h-6" />
           </button>
         </div>
 
@@ -112,7 +123,7 @@ export default function DashboardLayout({
             className="text-gray-400 p-2 -ml-2"
             onClick={() => setIsMobileMenuOpen(true)}
           >
-            <HiMenuAlt2 className="w-6 h-6" />
+            <Menu className="w-6 h-6" />
           </button>
           <span className="ml-4 font-bold text-white">Vibe Compliance</span>
         </header>

@@ -1,84 +1,87 @@
-import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { NextResponse } from "next/server";
 
-// Initialize Root Admin Client
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY! // Uses the Super Admin key
-);
-
-// GET: List all users (Debug Version)
+// 1. GET: Fetch list of users (for the Admin Table)
 export async function GET() {
   try {
-    console.log("--- ADMIN DEBUG START ---");
-    
-    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
-    const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
-
-    // 1. Check for Key Identity Crisis
-    if (serviceKey === anonKey) {
-        console.error("CRITICAL ERROR: Service Key is identical to Anon Key. You cannot list users with the Anon Key.");
-        return NextResponse.json({ error: "Configuration Error: Service Key is actually Anon Key" }, { status: 500 });
+    // We need the Service Role Key to see ALL users in the Auth system
+    if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+      return NextResponse.json({ error: "Server Configuration Error" }, { status: 500 });
     }
 
-    console.log("Key Check Passed: Service Key is distinct from Anon Key.");
-
-    // 2. Initialize Admin Client
     const supabaseAdmin = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      serviceKey,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!,
       {
         auth: {
           autoRefreshToken: false,
-          persistSession: false
-        }
+          persistSession: false,
+        },
       }
     );
 
-    // 3. Attempt Fetch
+    // List users from Supabase Auth
     const { data, error } = await supabaseAdmin.auth.admin.listUsers();
 
     if (error) {
-        console.error("Supabase API Error:", error);
-        return NextResponse.json({ error: error.message }, { status: 500 });
+      console.error("[Fetch Users Error]", error);
+      return NextResponse.json({ error: error.message }, { status: 400 });
     }
 
-    console.log(`Success! Retrieved ${data.users.length} users.`);
-    return NextResponse.json({ users: data.users });
+    // Return the list of users
+    return NextResponse.json(data.users);
 
-  } catch (error: any) {
-    console.error("Server Crash:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (err: any) {
+    console.error("[Server Error]", err);
+    return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
   }
 }
-// POST: Provision (Invite) a user
+
+// 2. POST: Invite a new user
 export async function POST(req: Request) {
   try {
-    const { email } = await req.json();
-    const { data, error } = await supabaseAdmin.auth.admin.inviteUserByEmail(email);
-    
-    if (error) throw error;
+    const body = await req.json();
+    const { email, fullName, role } = body;
 
-    return NextResponse.json({ success: true, user: data.user });
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    if (!email) {
+      return NextResponse.json({ error: "Email is required" }, { status: 400 });
+    }
+
+    if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+      return NextResponse.json({ error: "Server Configuration Error" }, { status: 500 });
+    }
+
+    const supabaseAdmin = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!,
+      {
+        auth: {
+          autoRefreshToken: false,
+          persistSession: false,
+        },
+      }
+    );
+
+    // Send the Invite
+    const { data, error } = await supabaseAdmin.auth.admin.inviteUserByEmail(email, {
+      data: {
+        full_name: fullName || "",
+        role: role || "user",
+      },
+      redirectTo: `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/auth/callback`,
+    });
+
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+
+    return NextResponse.json({ 
+      success: true, 
+      message: `Invite sent to ${email}`, 
+      user: data.user 
+    });
+
+  } catch (err: any) {
+    return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
   }
 }
-// PUT: Update a user's role
-export async function PUT(req: Request) {
-    try {
-      const { userId, role } = await req.json();
-      
-      // Update the user's app_metadata (Secure bucket for roles)
-      const { data, error } = await supabaseAdmin.auth.admin.updateUserById(
-        userId,
-        { app_metadata: { role } }
-      );
-      
-      if (error) throw error;
-  
-      return NextResponse.json({ success: true, user: data.user });
-    } catch (error: any) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
-    }
-  }

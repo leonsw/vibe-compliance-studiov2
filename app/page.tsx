@@ -1,107 +1,250 @@
-import Image from "next/image";
+"use client";
+
+import { useEffect, useState } from "react";
+import { createClient } from "@supabase/supabase-js";
+import { 
+  Activity, ShieldCheck, AlertTriangle, FileText, 
+  ArrowUpRight, CheckCircle, Clock 
+} from "lucide-react";
 import Link from "next/link";
 
-export default function Home() {
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);
+
+type DashboardMetrics = {
+  totalScore: number;
+  activeAssessments: number;
+  totalControls: number;
+  passedControls: number;
+  criticalSystems: number;
+};
+
+type RecentAssessment = {
+  id: string;
+  title: string;
+  standard: string;
+  status: string;
+  updated_at: string;
+  progress: number;
+};
+
+export default function DashboardPage() {
+  const [metrics, setMetrics] = useState<DashboardMetrics>({
+    totalScore: 0,
+    activeAssessments: 0,
+    totalControls: 0,
+    passedControls: 0,
+    criticalSystems: 0,
+  });
+  const [recents, setRecents] = useState<RecentAssessment[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetchDashboardData();
+  }, []);
+
+  async function fetchDashboardData() {
+    setLoading(true);
+
+    try {
+      // 1. Get Assessment Stats
+      const { data: assessments, error: asmError } = await supabase
+        .from("assessments")
+        .select("id, status, progress, title, standard, updated_at")
+        .order("updated_at", { ascending: false });
+
+      if (asmError) throw asmError;
+
+      // 2. Control Stats
+      const { count: totalControls } = await supabase
+        .from("controls")
+        .select("*", { count: "exact", head: true });
+
+      const { count: passedControls } = await supabase
+        .from("controls")
+        .select("*", { count: "exact", head: true })
+        .eq("status", "Pass"); 
+
+      // 3. Critical Systems Count (High + Critical)
+      const { count: criticalCount } = await supabase
+        .from("systems")
+        .select("*", { count: "exact", head: true })
+        .in("criticality", ["High", "Critical"]);
+
+      // Calculate Global Score
+      const validTotal = totalControls || 1;
+      const score = Math.round(((passedControls || 0) / validTotal) * 100);
+
+      setMetrics({
+        totalScore: score,
+        activeAssessments: assessments?.filter(a => a.status === "In Progress").length || 0,
+        totalControls: totalControls || 0,
+        passedControls: passedControls || 0,
+        criticalSystems: criticalCount || 0,
+      });
+
+      setRecents(assessments?.slice(0, 5) || []);
+
+    } catch (error) {
+      console.error("Dashboard Load Error:", error);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const getScoreColor = (score: number) => {
+    if (score >= 80) return "text-green-600";
+    if (score >= 50) return "text-orange-500";
+    return "text-red-600";
+  };
+
   return (
-    <div className="min-h-screen bg-[#0f172a] text-white font-sans selection:bg-sky-500/30">
-      
-      {/* Navigation */}
-      <nav className="flex items-center justify-between px-8 py-6 border-b border-gray-800/50 backdrop-blur-md sticky top-0 z-50 bg-[#0f172a]/80">
-        <div className="text-2xl font-bold tracking-tighter cursor-pointer">
-          Vibe<span className="text-[#38bdf8]">Compliance</span>
+    <div className="p-8 max-w-7xl mx-auto space-y-8">
+      {/* Header */}
+      <div className="flex justify-between items-end">
+        <div>
+          <h1 className="text-3xl font-bold text-gray-900">Executive Overview</h1>
+          <p className="text-gray-500 mt-1">Real-time governance and compliance monitoring.</p>
         </div>
-        <div className="hidden md:flex space-x-8 text-sm font-medium text-gray-400">
-          <a href="#" className="hover:text-white transition-colors duration-200">Platform</a>
-          <a href="#" className="hover:text-white transition-colors duration-200">Solutions</a>
-          <a href="#" className="hover:text-white transition-colors duration-200">Pricing</a>
-          <a href="#" className="text-[#38bdf8] hover:text-white transition-colors duration-200">Login</a>
+        <div className="text-right">
+          <p className="text-sm text-gray-400">Last updated</p>
+          <p className="text-sm font-medium text-gray-700">{new Date().toLocaleTimeString()}</p>
         </div>
-      </nav>
+      </div>
 
-      {/* Hero Section */}
-      <main className="max-w-7xl mx-auto px-6 py-24 text-center">
+      {/* KPI Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         
-        {/* Badge */}
-        <div className="inline-flex gap-3 mb-8">
-          {/* Blue Badge */}
-          <div className="inline-flex items-center px-4 py-1.5 rounded-full bg-gray-900 border border-gray-700/50 text-xs font-semibold text-[#38bdf8] uppercase tracking-wide hover:border-[#38bdf8]/50 transition-colors cursor-default">
-            <span className="w-2 h-2 rounded-full bg-[#38bdf8] mr-2 animate-pulse"></span>
-            Now in Private Beta
+        {/* Card 1: Score (No link, purely informational) */}
+        <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm relative overflow-hidden">
+          <div className="flex justify-between items-start mb-4">
+            <div className="p-2 bg-gray-50 rounded-lg">
+              <ShieldCheck className="w-6 h-6 text-gray-700" />
+            </div>
+            <span className={`text-3xl font-bold ${getScoreColor(metrics.totalScore)}`}>
+              {metrics.totalScore}%
+            </span>
           </div>
-          {/* Green Badge */}
-          <div className="inline-flex items-center px-4 py-1.5 rounded-full bg-gray-900 border border-green-700/50 text-xs font-semibold text-green-400 uppercase tracking-wide hover:border-green-400/50 transition-colors cursor-default">
-            <span className="w-2 h-2 rounded-full bg-green-400 mr-2 animate-pulse"></span>
-            NIST 800-171 Ready
+          <h3 className="text-gray-500 font-medium text-sm uppercase tracking-wide">Global Compliance</h3>
+          <div className="w-full bg-gray-100 h-1.5 rounded-full mt-4 overflow-hidden">
+            <div 
+              className={`h-full rounded-full transition-all duration-1000 ${
+                metrics.totalScore >= 80 ? 'bg-green-500' : metrics.totalScore >= 50 ? 'bg-orange-400' : 'bg-red-500'
+              }`} 
+              style={{ width: `${metrics.totalScore}%` }}
+            ></div>
           </div>
         </div>
-        
-        {/* Headline */}
-        <h1 className="text-5xl md:text-7xl font-extrabold tracking-tight mb-8 leading-tight">
-          Build secure workflows <br />
-          at the speed of <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#38bdf8] to-blue-600">vibe coding</span>.
-        </h1>
-        
-        <p className="text-xl text-gray-400 max-w-2xl mx-auto mb-12 leading-relaxed">
-          Empower IT and security teams to co-create internal tools safely. 
-          Automated compliance mapping for NIST 800-171 and CMMC 2.0 built-in.
-        </p>
 
-        {/* CTA Buttons */}
-        <div className="flex flex-col sm:flex-row justify-center gap-4 mb-20">
-          <Link
-            href="/dashboard"
-            className="px-8 py-4 bg-[#38bdf8] text-[#0f172a] font-bold rounded-lg hover:bg-sky-300 transition-all duration-200 shadow-[0_0_20px_-5px_rgba(56,189,248,0.5)] flex items-center justify-center"
-          >
-            Start Building
+        {/* Card 2: Active Assessments (Clickable) */}
+        <Link href="/dashboard/assessments" className="block group">
+          <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm hover:border-blue-400 hover:shadow-md transition duration-200 h-full">
+            <div className="flex justify-between items-start mb-4">
+              <div className="p-2 bg-blue-50 rounded-lg group-hover:bg-blue-100 transition">
+                <Activity className="w-6 h-6 text-blue-600" />
+              </div>
+              <span className="text-3xl font-bold text-gray-900">{metrics.activeAssessments}</span>
+            </div>
+            <h3 className="text-gray-500 font-medium text-sm uppercase tracking-wide flex items-center gap-1">
+              Active Audits <ArrowUpRight className="w-3 h-3 opacity-0 group-hover:opacity-100 transition" />
+            </h3>
+            <p className="text-xs text-gray-400 mt-2">
+              Assessments currently in progress
+            </p>
+          </div>
+        </Link>
+
+        {/* Card 3: At-Risk Assets (Clickable) */}
+        <Link href="/dashboard/assets" className="block group">
+          <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm hover:border-red-400 hover:shadow-md transition duration-200 h-full">
+            <div className="flex justify-between items-start mb-4">
+              <div className="p-2 bg-red-50 rounded-lg group-hover:bg-red-100 transition">
+                <AlertTriangle className="w-6 h-6 text-red-600" />
+              </div>
+              <span className="text-3xl font-bold text-gray-900">{metrics.criticalSystems}</span>
+            </div>
+            <h3 className="text-gray-500 font-medium text-sm uppercase tracking-wide flex items-center gap-1">
+              High Risk Assets <ArrowUpRight className="w-3 h-3 opacity-0 group-hover:opacity-100 transition" />
+            </h3>
+            <p className="text-xs text-gray-400 mt-2">
+              Systems marked Critical or High
+            </p>
+          </div>
+        </Link>
+      </div>
+
+      {/* Recent Activity Table */}
+      <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
+        <div className="p-6 border-b border-gray-100 flex justify-between items-center">
+          <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+            <FileText className="w-5 h-5 text-gray-400" /> Recent Activity
+          </h2>
+          <Link href="/dashboard/assessments" className="text-sm text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1">
+            View Full List <ArrowUpRight className="w-4 h-4" />
           </Link>
-          <button className="px-8 py-4 bg-gray-800/50 border border-gray-700 text-white font-medium rounded-lg hover:bg-gray-700 transition-all duration-200 backdrop-blur-sm">
-            Book Demo
-          </button>
         </div>
-
-        {/* The "Terminal" Dashboard Preview */}
-        <div className="relative mx-auto max-w-5xl rounded-xl border border-gray-800 bg-[#020617] shadow-2xl overflow-hidden text-left">
-          {/* Window Controls */}
-          <div className="flex items-center gap-2 px-4 py-3 bg-[#1e293b] border-b border-gray-800">
-            <div className="w-3 h-3 rounded-full bg-red-500/80"></div>
-            <div className="w-3 h-3 rounded-full bg-yellow-500/80"></div>
-            <div className="w-3 h-3 rounded-full bg-green-500/80"></div>
-            <div className="ml-4 text-xs text-gray-500 font-mono">vibe-compliance-agent — -zsh — 80x24</div>
-          </div>
-          
-          {/* Terminal Content */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-0 h-96">
-            {/* Sidebar */}
-            <div className="hidden md:block col-span-1 border-r border-gray-800 bg-[#0f172a]/50 p-4 space-y-3">
-               <div className="h-2 w-20 bg-gray-700 rounded opacity-50"></div>
-               <div className="h-2 w-16 bg-gray-800 rounded opacity-50"></div>
-               <div className="h-2 w-24 bg-gray-800 rounded opacity-50"></div>
-               <div className="mt-8 h-2 w-12 bg-gray-700 rounded opacity-50"></div>
-            </div>
-
-            {/* Code Area */}
-            <div className="col-span-3 p-6 font-mono text-sm">
-                <div className="text-green-400 mb-2">$ vibe run audit --target=s3-buckets</div>
-                <div className="text-gray-400 space-y-1">
-                    <p>Initializing NIST 800-171 Scanner...</p>
-                    <p>[+] Authenticated as Admin (MFA Verified)</p>
-                    <p>[+] Scanning 14 buckets in us-east-1...</p>
-                    <p className="text-yellow-400">[!] Alert: Bucket 'customer-logs-backup' is public.</p>
-                    <p className="text-[#38bdf8]">[i] Auto-remediation script generated.</p>
-                </div>
-                <div className="mt-4 flex items-center">
-                    <span className="text-green-400 mr-2">➜</span>
-                    <span className="w-2 h-5 bg-gray-500 animate-pulse"></span>
-                </div>
-            </div>
-          </div>
-        </div>
-      </main>
-      
-      {/* Footer Strip */}
-      <footer className="border-t border-gray-800 py-8 text-center text-gray-600 text-sm">
-        <p>&copy; 2025 Vibe Compliance Studio. All systems operational.</p>
-      </footer>
+        
+        <table className="w-full text-left text-sm">
+          <thead className="bg-gray-50 text-gray-500 font-medium border-b border-gray-100">
+            <tr>
+              <th className="px-6 py-4">Assessment Title</th>
+              <th className="px-6 py-4">Standard</th>
+              <th className="px-6 py-4">Status</th>
+              <th className="px-6 py-4">Progress</th>
+              <th className="px-6 py-4 text-right">Updated</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {loading ? (
+              <tr><td colSpan={5} className="p-8 text-center text-gray-500">Loading data...</td></tr>
+            ) : recents.length === 0 ? (
+              <tr><td colSpan={5} className="p-8 text-center text-gray-500">No assessments found. Start one with the AI Agent!</td></tr>
+            ) : (
+              recents.map((item) => (
+                <tr key={item.id} className="hover:bg-gray-50 transition">
+                  <td className="px-6 py-4 font-medium text-gray-900">
+                    <Link href={`/dashboard/assessments/${item.id}`} className="hover:underline">
+                      {item.title}
+                    </Link>
+                  </td>
+                  <td className="px-6 py-4 text-gray-600">
+                    <span className="bg-gray-100 text-gray-700 px-2 py-1 rounded text-xs border border-gray-200">
+                      {item.standard}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4">
+                    {item.status === 'Completed' ? (
+                      <span className="flex items-center gap-1.5 text-green-700 bg-green-50 px-2 py-1 rounded-full w-fit text-xs font-medium">
+                        <CheckCircle className="w-3 h-3" /> Completed
+                      </span>
+                    ) : (
+                      <span className="flex items-center gap-1.5 text-blue-700 bg-blue-50 px-2 py-1 rounded-full w-fit text-xs font-medium">
+                        <Clock className="w-3 h-3" /> In Progress
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-6 py-4">
+                    <div className="flex items-center gap-2">
+                      <div className="w-24 bg-gray-100 h-1.5 rounded-full overflow-hidden">
+                        <div 
+                          className="bg-black h-full rounded-full" 
+                          style={{ width: `${item.progress}%` }}
+                        ></div>
+                      </div>
+                      <span className="text-xs text-gray-500">{item.progress}%</span>
+                    </div>
+                  </td>
+                  <td className="px-6 py-4 text-right text-gray-400">
+                    {new Date(item.updated_at).toLocaleDateString()}
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

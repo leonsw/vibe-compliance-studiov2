@@ -7,14 +7,16 @@ import {
   HiChevronDown,
   HiChevronRight,
   HiCheckCircle,
-  HiExclamationCircle,
+  HiExclamationCircle, // Used for Risk Icon
   HiCloudUpload,
   HiChatAlt2,
   HiLightningBolt,
   HiDocumentSearch,
   HiPaperAirplane,
   HiExternalLink,
-  HiClock
+  HiClock,
+  HiXCircle,    // New: Fail Icon
+  HiMinusCircle // New: N/A Icon
 } from "react-icons/hi";
 
 // --- Types ---
@@ -30,11 +32,11 @@ interface Evidence {
 }
 
 interface Control {
-  id: string; // UUID
-  control_code: string; // Label like 'AC.1.001'
+  id: string; 
+  control_code: string; 
   family: string;
   description: string;
-  status: 'Compliant' | 'Non-Compliant' | 'Review Required' | 'Missing' | 'Not Started' | 'Failed';
+  status: 'Compliant' | 'Non-Compliant' | 'Review Required' | 'Missing' | 'Not Started' | 'Failed' | 'N/A'; // Added N/A
   evidence?: Evidence[];
 }
 
@@ -66,7 +68,6 @@ export default function AssessmentWorkbench() {
   const [isChatLoading, setIsChatLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // --- Scroll to bottom of chat ---
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
@@ -75,15 +76,12 @@ export default function AssessmentWorkbench() {
   // --- Fetch Data ---
   useEffect(() => {
     if (!assessmentId) return;
-
-    // Guard against "new" or invalid IDs
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     if (!uuidRegex.test(assessmentId)) return;
 
     const fetchData = async () => {
       setLoading(true);
       
-      // 1. Fetch Assessment
       const { data: asmData, error: asmError } = await supabase
         .from("assessments")
         .select("*")
@@ -93,13 +91,9 @@ export default function AssessmentWorkbench() {
       if (asmError) console.error("Error fetching assessment:", asmError);
       else setAssessment(asmData);
 
-      // 2. Fetch Controls & Evidence
       const { data: ctrlData, error: ctrlError } = await supabase
         .from("controls")
-        .select(`
-            *,
-            evidence (*)
-        `)
+        .select(`*, evidence (*)`)
         .eq("assessment_id", assessmentId)
         .order('control_code', { ascending: true });
 
@@ -112,10 +106,37 @@ export default function AssessmentWorkbench() {
     fetchData();
   }, [assessmentId]);
 
-  // --- 1. Chat Handler (RAG) ---
+  // --- NEW: Handle Control Status Update (Pass/Fail/NA) ---
+  const updateControlStatus = async (e: React.MouseEvent, controlId: string, newStatus: string) => {
+    e.stopPropagation(); // Prevent toggling the accordion
+
+    // 1. Optimistic Update
+    setControls(prev => prev.map(c => c.id === controlId ? { ...c, status: newStatus as any } : c));
+
+    // 2. Database Update
+    const { error } = await supabase
+        .from("controls")
+        .update({ status: newStatus })
+        .eq("id", controlId);
+
+    if (error) {
+        alert("Error updating status");
+        return;
+    }
+
+    // 3. Update Assessment Progress
+    const total = controls.length;
+    const doneCount = controls.map(c => c.id === controlId ? { ...c, status: newStatus } : c)
+                              .filter(c => c.status !== 'Not Started').length;
+    const newProgress = Math.round((doneCount / total) * 100);
+
+    await supabase.from("assessments").update({ progress: newProgress }).eq("id", assessmentId);
+    setAssessment((prev: any) => ({ ...prev, progress: newProgress }));
+  };
+
+  // --- Existing Chat Handler ---
   const handleSendMessage = async () => {
     if (!input.trim()) return;
-
     const userMessage = input;
     setInput(""); 
     setMessages(prev => [...prev, { role: 'user', content: userMessage }]);
@@ -138,10 +159,8 @@ export default function AssessmentWorkbench() {
           }
         })
       });
-
       const data = await response.json();
       setMessages(prev => [...prev, { role: 'ai', content: data.reply || "Error connecting to AI." }]);
-
     } catch (error) {
       setMessages(prev => [...prev, { role: 'ai', content: "System Error: Failed to reach Copilot." }]);
     } finally {
@@ -149,7 +168,7 @@ export default function AssessmentWorkbench() {
     }
   };
 
-  // --- 2. Auto-Scan Handler (GitHub Integration) ---
+  // --- Existing Auto-Scan Handler ---
   const handleAutoScan = async (control: Control) => {
     setScanLoadingId(control.id);
     try {
@@ -170,7 +189,6 @@ export default function AssessmentWorkbench() {
           .single();
 
         if (error) throw error;
-
         updateControlEvidence(control.id, newEvidence);
         alert(`Scan Complete: MFA is ${data.mfa_enabled ? 'Enabled' : 'Disabled'}`);
       } else {
@@ -184,11 +202,10 @@ export default function AssessmentWorkbench() {
     }
   };
 
-  // --- 3. Real Policy Mapper (RAG) ---
+  // --- Existing Policy Mapper ---
   const handleLinkPolicy = async (control: Control) => {
     setScanLoadingId(control.id);
     try {
-        // Call the Mapper API
         const response = await fetch('/api/policy/map', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -202,14 +219,13 @@ export default function AssessmentWorkbench() {
         const result = await response.json();
 
         if (result.found) {
-            // Success: We found a matching policy paragraph!
             const { data: newEvidence, error } = await supabase
               .from("evidence")
               .insert({
                 control_id: control.id,
                 name: result.evidenceData.name, 
                 source_type: 'Policy_AI', 
-                status: 'Pending', // Pending human review
+                status: 'Pending', 
                 snippet: result.evidenceData.snippet,
                 confidence_score: result.evidenceData.confidence,
                 ai_feedback: `AI matched this policy section with ${result.evidenceData.confidence}% similarity.`
@@ -220,12 +236,9 @@ export default function AssessmentWorkbench() {
             if (error) throw error;
             updateControlEvidence(control.id, newEvidence as any);
             alert(`Policy Linked!\n\nDocument: ${result.evidenceData.name}\nMatch Score: ${result.evidenceData.confidence}%`);
-
         } else {
-            // Failure: No policy matches this requirement
-            alert("Analysis Complete: No relevant policy documents found in your library for this specific requirement.");
+            alert("Analysis Complete: No relevant policy documents found.");
         }
-
     } catch (err: any) {
         console.error(err);
         alert("Policy Scan Error: " + err.message);
@@ -234,7 +247,7 @@ export default function AssessmentWorkbench() {
     }
   };
 
-  // --- 4. Manual Upload + AI Validator (Multimodal Agent) ---
+  // --- Existing Manual Upload ---
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>, control: Control) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -243,7 +256,6 @@ export default function AssessmentWorkbench() {
     setManualUploadLoadingId(control.id);
 
     try {
-      // A. Upload to Supabase Storage
       const path = `${assessmentId}/${control.id}/${Date.now()}_${file.name}`;
       const { error: uploadError } = await supabase.storage
         .from("evidence-files")
@@ -251,12 +263,10 @@ export default function AssessmentWorkbench() {
 
       if (uploadError) throw uploadError;
 
-      // B. Get Public URL
       const { data: { publicUrl } } = supabase.storage
         .from("evidence-files")
         .getPublicUrl(path);
 
-      // C. Create DB Record
       const { data: newEvidence, error: dbError } = await supabase
         .from("evidence")
         .insert({
@@ -270,11 +280,9 @@ export default function AssessmentWorkbench() {
         .single();
 
       if (dbError) throw dbError;
-
-      // Update UI (Cast newEvidence to 'any' to bypass strict DB type mismatch)
       updateControlEvidence(control.id, newEvidence as any);
 
-      // D. Trigger AI Validator
+      // AI Validator
       fetch('/api/evidence/validate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -288,30 +296,9 @@ export default function AssessmentWorkbench() {
       .then(aiResult => {
         if (aiResult.verdict) {
             const verdictStatus = aiResult.verdict.status === 'Verified' ? 'Verified' : 'Failed';
-            
             alert(`AI VERDICT: ${verdictStatus}\n\nReason: ${aiResult.verdict.reasoning}\nConfidence: ${aiResult.verdict.confidence_score}%`);
  
-            // --- JIRA TRIGGER (NEW) ---
-            if (verdictStatus === 'Failed') {
-                const createTicket = confirm("Control Failed! Do you want to auto-create a Jira Remediation Ticket?");
-                if (createTicket) {
-                    // Call Jira API
-                    fetch('/api/integrations/jira/create', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            title: control.control_code + " - " + control.description.substring(0, 50),
-                            description: `AI Logic: ${aiResult.verdict.reasoning}\n\nConfidence: ${aiResult.verdict.confidence_score}%`,
-                            controlId: control.id
-                        })
-                    })
-                    .then(r => r.json())
-                    .then(jira => {
-                        if (jira.success) alert(`Ticket Created: ${jira.ticketKey}`);
-                        else alert("Jira Error: " + jira.error);
-                    });
-                }
-            }
+            
         }  
       });
 
@@ -327,59 +314,33 @@ export default function AssessmentWorkbench() {
     }
   };
 
- // --- 5. Sync Jira Handler (Fixed Types) ---
- const handleSyncJira = async (evidence: Evidence, control: Control) => {
-    // In a real app, call API /api/integrations/jira/sync
+  // --- Existing Jira Sync ---
+  const handleSyncJira = async (evidence: Evidence, control: Control) => {
     const isClosed = confirm(`Simulating Jira Sync for ${evidence.name}...\n\nIs the ticket closed in Jira? (Click OK to simulate 'Done')`);
     
     if (isClosed) {
         try {
-            // 1. Update Evidence to Verified
-            const { error: evError } = await supabase
-                .from("evidence")
-                .update({ status: 'Verified' })
-                .eq("id", evidence.id);
-            
+            const { error: evError } = await supabase.from("evidence").update({ status: 'Verified' }).eq("id", evidence.id);
             if (evError) throw evError;
 
-            // 2. Update Control to 'Review Required'
-            const { error: ctrlError } = await supabase
-                .from("controls")
-                .update({ status: 'Review Required' })
-                .eq("id", control.id);
-
+            const { error: ctrlError } = await supabase.from("controls").update({ status: 'Review Required' }).eq("id", control.id);
             if (ctrlError) throw ctrlError;
 
-            // 3. Update Local State (With Type Casting)
             setControls(prev => prev.map(c => {
                 if (c.id === control.id) {
-                    // Update Evidence List
-                    const updatedEv = c.evidence?.map(e => 
-                        e.id === evidence.id 
-                        ? { ...e, status: 'Verified' as 'Verified' } // <--- FIX 1: Explicit Cast
-                        : e
-                    );
-                    
-                    // Update Control Status
-                    return { 
-                        ...c, 
-                        status: 'Review Required' as 'Review Required', // <--- FIX 2: Explicit Cast
-                        evidence: updatedEv 
-                    };
+                    const updatedEv = c.evidence?.map(e => e.id === evidence.id ? { ...e, status: 'Verified' as 'Verified' } : e);
+                    return { ...c, status: 'Review Required' as 'Review Required', evidence: updatedEv };
                 }
                 return c;
             }));
-            
             alert("Synced! Ticket closed. Control marked for review.");
-
         } catch (err: any) {
             console.error("Sync error:", err);
             alert("Sync failed: " + err.message);
         }
     }
   };
-  // Helper to update state safely
-  // Helper to update state safely
+
   const updateControlEvidence = (controlId: string, newEvidence: Evidence) => {
     setControls(prev => prev.map(c => {
         if (c.id === controlId) {
@@ -427,15 +388,46 @@ export default function AssessmentWorkbench() {
                             {expandedControl === control.id ? <HiChevronDown size={20}/> : <HiChevronRight size={20}/>}
                         </div>
                         <div className="w-24 font-mono text-sm font-bold text-gray-400">{control.control_code}</div>
-                        <div className="flex-1 text-gray-200 font-medium">{control.description}</div>
-                        <div className={`text-xs px-2 py-1 rounded border font-medium ${
-                        control.status === 'Compliant' ? 'bg-green-900/20 text-green-400 border-green-900' :
-                        control.status === 'Failed' ? 'bg-red-900/20 text-red-400 border-red-900' : // <--- "Failed" is Red
-                        control.status === 'Review Required' ? 'bg-yellow-900/20 text-yellow-400 border-yellow-900' :
-                        'bg-gray-800 text-gray-400 border-gray-700'
-                    }`}>
-                        {control.status}
-                    </div>
+                        <div className="flex-1">
+                            <div className="text-gray-200 font-medium">{control.description}</div>
+                            {/* RISK ALERT (Shown if Failed) */}
+                            {(control.status === 'Failed' || control.status === 'Non-Compliant') && (
+                                <div className="mt-1 flex items-center gap-1 text-xs text-red-400 font-bold animate-pulse">
+                                    <HiExclamationCircle /> Risk Record Created
+                                </div>
+                            )}
+                        </div>
+                        
+                        {/* --- NEW: STATUS TOGGLE BUTTONS --- */}
+                        <div className="flex items-center gap-1 ml-4 bg-[#0f172a] p-1 rounded border border-gray-700/50">
+                            <button
+                                onClick={(e) => updateControlStatus(e, control.id, 'Compliant')}
+                                className={`p-1.5 rounded transition ${
+                                    control.status === 'Compliant' ? 'bg-green-600 text-white' : 'text-gray-500 hover:text-green-400'
+                                }`}
+                                title="Pass"
+                            >
+                                <HiCheckCircle size={18} />
+                            </button>
+                            <button
+                                onClick={(e) => updateControlStatus(e, control.id, 'Failed')}
+                                className={`p-1.5 rounded transition ${
+                                    control.status === 'Failed' || control.status === 'Non-Compliant' ? 'bg-red-600 text-white' : 'text-gray-500 hover:text-red-400'
+                                }`}
+                                title="Fail (Creates Risk)"
+                            >
+                                <HiXCircle size={18} />
+                            </button>
+                            <button
+                                onClick={(e) => updateControlStatus(e, control.id, 'N/A')}
+                                className={`p-1.5 rounded transition ${
+                                    control.status === 'N/A' ? 'bg-gray-600 text-white' : 'text-gray-500 hover:text-gray-300'
+                                }`}
+                                title="Not Applicable"
+                            >
+                                <HiMinusCircle size={18} />
+                            </button>
+                        </div>
                     </div>
 
                     {expandedControl === control.id && (
@@ -456,15 +448,12 @@ export default function AssessmentWorkbench() {
                                                 <div className="flex flex-col">
                                                     <span className="text-sm text-white flex items-center gap-2">
                                                         {ev.name}
-                                                        {/* LINK TO EXTERNAL URL */}
                                                         {ev.url && (
                                                             <a href={ev.url} target="_blank" rel="noopener noreferrer" className="text-gray-500 hover:text-blue-400">
                                                                 <HiExternalLink />
                                                             </a>
                                                         )}
                                                     </span>
-                                                    
-                                                    {/* AI Score */}
                                                     {ev.confidence_score !== undefined && ev.confidence_score > 0 && (
                                                         <span className={`text-[10px] ${ev.confidence_score > 80 ? 'text-green-400' : 'text-yellow-400'}`}>
                                                         AI Confidence: {ev.confidence_score}%
@@ -474,7 +463,6 @@ export default function AssessmentWorkbench() {
                                             </div>
                                     
                                             <div className="flex items-center gap-3">
-                                                {/* --- NEW: SYNC JIRA BUTTON --- */}
                                                 {ev.name.includes("Remediation Ticket") && ev.status !== 'Verified' && (
                                                     <button 
                                                         onClick={() => handleSyncJira(ev, control)}
@@ -483,8 +471,6 @@ export default function AssessmentWorkbench() {
                                                         Sync Status
                                                     </button>
                                                 )}
-                                    
-                                                {/* Status Badge */}
                                                 <span className={`text-xs px-2 py-0.5 rounded border ${
                                                     ev.status === 'Verified' ? 'text-green-400 border-green-900 bg-green-900/20' : 
                                                     ev.status === 'Failed' ? 'text-red-400 border-red-900 bg-red-900/20' :
@@ -500,7 +486,6 @@ export default function AssessmentWorkbench() {
                             </div>
 
                             <div className="flex gap-3 mt-4 border-t border-gray-800 pt-4">
-                                {/* Hidden Input for File Upload */}
                                 <input
                                     type="file"
                                     className="hidden"
