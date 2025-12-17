@@ -23,6 +23,10 @@ export async function POST(req: NextRequest) {
     const file = formData.get("file") as File | null;
     const standardName = (formData.get("standardName") || formData.get("name")) as string | null;
 
+    // --- NEW: Grab Storage Details ---
+    const publicUrl = formData.get("url") as string || null;
+    const storagePath = formData.get("storage_path") as string || null;
+
     if (!file || !standardName) {
       return NextResponse.json({ error: "Missing file or standard name." }, { status: 400 });
     }
@@ -70,10 +74,16 @@ export async function POST(req: NextRequest) {
     );
 
     // A. Upsert Standard Record (The "Folder")
+    // --- UPDATED: Now saves url and storage_path ---
     const { data: stdRecord, error: stdError } = await supabase
       .from("standards_library")
       .upsert(
-        { name: standardName, description: `Imported from ${file.name}` }, 
+        { 
+          name: standardName, 
+          description: `Imported from ${file.name}`,
+          url: publicUrl,          // <--- Save Public Link
+          storage_path: storagePath // <--- Save File Path
+        }, 
         { onConflict: "name" }
       )
       .select()
@@ -81,7 +91,10 @@ export async function POST(req: NextRequest) {
 
     if (stdError) throw new Error(`DB Error (Standard): ${stdError.message}`);
 
-    // B. THE FIX: Delete existing controls for this standard (Overwrite logic)
+    // B. Delete existing controls for this standard (Overwrite logic)
+    // NOTE: Ensure your DB table is named 'master_controls' or 'controls'. 
+    // Your frontend used 'controls' in the Inspect modal, but here it is 'master_controls'.
+    // Standardizing on 'master_controls' is safer if that is your schema.
     const { error: deleteError } = await supabase
       .from("master_controls")
       .delete()
@@ -95,6 +108,7 @@ export async function POST(req: NextRequest) {
       control_code: c.control_code,
       family: c.family,
       description: c.description,
+      // Optional: Add embedding generation logic here later if needed
     }));
 
     const { error: insertError } = await supabase
