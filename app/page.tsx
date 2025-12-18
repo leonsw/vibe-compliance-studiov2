@@ -1,250 +1,138 @@
-"use client";
-
-import { useEffect, useState } from "react";
-import { createClient } from "@supabase/supabase-js";
-import { 
-  Activity, ShieldCheck, AlertTriangle, FileText, 
-  ArrowUpRight, CheckCircle, Clock 
-} from "lucide-react";
 import Link from "next/link";
+import { 
+  HiLightningBolt, 
+  HiShieldCheck, 
+  HiChip, 
+  HiArrowRight 
+} from "react-icons/hi";
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
-
-type DashboardMetrics = {
-  totalScore: number;
-  activeAssessments: number;
-  totalControls: number;
-  passedControls: number;
-  criticalSystems: number;
-};
-
-type RecentAssessment = {
-  id: string;
-  title: string;
-  standard: string;
-  status: string;
-  updated_at: string;
-  progress: number;
-};
-
-export default function DashboardPage() {
-  const [metrics, setMetrics] = useState<DashboardMetrics>({
-    totalScore: 0,
-    activeAssessments: 0,
-    totalControls: 0,
-    passedControls: 0,
-    criticalSystems: 0,
-  });
-  const [recents, setRecents] = useState<RecentAssessment[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    fetchDashboardData();
-  }, []);
-
-  async function fetchDashboardData() {
-    setLoading(true);
-
-    try {
-      // 1. Get Assessment Stats
-      const { data: assessments, error: asmError } = await supabase
-        .from("assessments")
-        .select("id, status, progress, title, standard, updated_at")
-        .order("updated_at", { ascending: false });
-
-      if (asmError) throw asmError;
-
-      // 2. Control Stats
-      const { count: totalControls } = await supabase
-        .from("controls")
-        .select("*", { count: "exact", head: true });
-
-      const { count: passedControls } = await supabase
-        .from("controls")
-        .select("*", { count: "exact", head: true })
-        .eq("status", "Pass"); 
-
-      // 3. Critical Systems Count (High + Critical)
-      const { count: criticalCount } = await supabase
-        .from("systems")
-        .select("*", { count: "exact", head: true })
-        .in("criticality", ["High", "Critical"]);
-
-      // Calculate Global Score
-      const validTotal = totalControls || 1;
-      const score = Math.round(((passedControls || 0) / validTotal) * 100);
-
-      setMetrics({
-        totalScore: score,
-        activeAssessments: assessments?.filter(a => a.status === "In Progress").length || 0,
-        totalControls: totalControls || 0,
-        passedControls: passedControls || 0,
-        criticalSystems: criticalCount || 0,
-      });
-
-      setRecents(assessments?.slice(0, 5) || []);
-
-    } catch (error) {
-      console.error("Dashboard Load Error:", error);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  const getScoreColor = (score: number) => {
-    if (score >= 80) return "text-green-600";
-    if (score >= 50) return "text-orange-500";
-    return "text-red-600";
-  };
-
+export default function Home() {
   return (
-    <div className="p-8 max-w-7xl mx-auto space-y-8">
-      {/* Header */}
-      <div className="flex justify-between items-end">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900">Executive Overview</h1>
-          <p className="text-gray-500 mt-1">Real-time governance and compliance monitoring.</p>
+    <div className="min-h-screen bg-[#0f172a] text-white font-sans selection:bg-[#38bdf8] selection:text-[#0f172a]">
+      
+      {/* NAVIGATION */}
+      <nav className="flex items-center justify-between px-8 py-6 border-b border-gray-800/50 backdrop-blur-md sticky top-0 z-50 bg-[#0f172a]/80">
+        <div className="text-2xl font-bold tracking-tighter flex items-center gap-2">
+          <div className="w-3 h-3 rounded-full bg-[#38bdf8] animate-pulse"></div>
+          Vibe<span className="text-[#38bdf8]">Compliance</span>
         </div>
-        <div className="text-right">
-          <p className="text-sm text-gray-400">Last updated</p>
-          <p className="text-sm font-medium text-gray-700">{new Date().toLocaleTimeString()}</p>
-        </div>
-      </div>
-
-      {/* KPI Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        
-        {/* Card 1: Score (No link, purely informational) */}
-        <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm relative overflow-hidden">
-          <div className="flex justify-between items-start mb-4">
-            <div className="p-2 bg-gray-50 rounded-lg">
-              <ShieldCheck className="w-6 h-6 text-gray-700" />
-            </div>
-            <span className={`text-3xl font-bold ${getScoreColor(metrics.totalScore)}`}>
-              {metrics.totalScore}%
-            </span>
-          </div>
-          <h3 className="text-gray-500 font-medium text-sm uppercase tracking-wide">Global Compliance</h3>
-          <div className="w-full bg-gray-100 h-1.5 rounded-full mt-4 overflow-hidden">
-            <div 
-              className={`h-full rounded-full transition-all duration-1000 ${
-                metrics.totalScore >= 80 ? 'bg-green-500' : metrics.totalScore >= 50 ? 'bg-orange-400' : 'bg-red-500'
-              }`} 
-              style={{ width: `${metrics.totalScore}%` }}
-            ></div>
-          </div>
-        </div>
-
-        {/* Card 2: Active Assessments (Clickable) */}
-        <Link href="/dashboard/assessments" className="block group">
-          <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm hover:border-blue-400 hover:shadow-md transition duration-200 h-full">
-            <div className="flex justify-between items-start mb-4">
-              <div className="p-2 bg-blue-50 rounded-lg group-hover:bg-blue-100 transition">
-                <Activity className="w-6 h-6 text-blue-600" />
-              </div>
-              <span className="text-3xl font-bold text-gray-900">{metrics.activeAssessments}</span>
-            </div>
-            <h3 className="text-gray-500 font-medium text-sm uppercase tracking-wide flex items-center gap-1">
-              Active Audits <ArrowUpRight className="w-3 h-3 opacity-0 group-hover:opacity-100 transition" />
-            </h3>
-            <p className="text-xs text-gray-400 mt-2">
-              Assessments currently in progress
-            </p>
-          </div>
-        </Link>
-
-        {/* Card 3: At-Risk Assets (Clickable) */}
-        <Link href="/dashboard/assets" className="block group">
-          <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm hover:border-red-400 hover:shadow-md transition duration-200 h-full">
-            <div className="flex justify-between items-start mb-4">
-              <div className="p-2 bg-red-50 rounded-lg group-hover:bg-red-100 transition">
-                <AlertTriangle className="w-6 h-6 text-red-600" />
-              </div>
-              <span className="text-3xl font-bold text-gray-900">{metrics.criticalSystems}</span>
-            </div>
-            <h3 className="text-gray-500 font-medium text-sm uppercase tracking-wide flex items-center gap-1">
-              High Risk Assets <ArrowUpRight className="w-3 h-3 opacity-0 group-hover:opacity-100 transition" />
-            </h3>
-            <p className="text-xs text-gray-400 mt-2">
-              Systems marked Critical or High
-            </p>
-          </div>
-        </Link>
-      </div>
-
-      {/* Recent Activity Table */}
-      <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
-        <div className="p-6 border-b border-gray-100 flex justify-between items-center">
-          <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-            <FileText className="w-5 h-5 text-gray-400" /> Recent Activity
-          </h2>
-          <Link href="/dashboard/assessments" className="text-sm text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1">
-            View Full List <ArrowUpRight className="w-4 h-4" />
+        <div className="hidden md:flex space-x-8 text-sm font-medium text-gray-400">
+          <a href="#features" className="hover:text-white transition">Capabilities</a>
+          <a href="#workflow" className="hover:text-white transition">Workflow</a>
+          <Link href="/dashboard" className="text-[#38bdf8] hover:text-white transition font-bold">
+            Enter Studio &rarr;
           </Link>
         </div>
+      </nav>
+
+      <main className="max-w-7xl mx-auto px-8 py-20">
         
-        <table className="w-full text-left text-sm">
-          <thead className="bg-gray-50 text-gray-500 font-medium border-b border-gray-100">
-            <tr>
-              <th className="px-6 py-4">Assessment Title</th>
-              <th className="px-6 py-4">Standard</th>
-              <th className="px-6 py-4">Status</th>
-              <th className="px-6 py-4">Progress</th>
-              <th className="px-6 py-4 text-right">Updated</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-100">
-            {loading ? (
-              <tr><td colSpan={5} className="p-8 text-center text-gray-500">Loading data...</td></tr>
-            ) : recents.length === 0 ? (
-              <tr><td colSpan={5} className="p-8 text-center text-gray-500">No assessments found. Start one with the AI Agent!</td></tr>
-            ) : (
-              recents.map((item) => (
-                <tr key={item.id} className="hover:bg-gray-50 transition">
-                  <td className="px-6 py-4 font-medium text-gray-900">
-                    <Link href={`/dashboard/assessments/${item.id}`} className="hover:underline">
-                      {item.title}
-                    </Link>
-                  </td>
-                  <td className="px-6 py-4 text-gray-600">
-                    <span className="bg-gray-100 text-gray-700 px-2 py-1 rounded text-xs border border-gray-200">
-                      {item.standard}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4">
-                    {item.status === 'Completed' ? (
-                      <span className="flex items-center gap-1.5 text-green-700 bg-green-50 px-2 py-1 rounded-full w-fit text-xs font-medium">
-                        <CheckCircle className="w-3 h-3" /> Completed
-                      </span>
-                    ) : (
-                      <span className="flex items-center gap-1.5 text-blue-700 bg-blue-50 px-2 py-1 rounded-full w-fit text-xs font-medium">
-                        <Clock className="w-3 h-3" /> In Progress
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-2">
-                      <div className="w-24 bg-gray-100 h-1.5 rounded-full overflow-hidden">
-                        <div 
-                          className="bg-black h-full rounded-full" 
-                          style={{ width: `${item.progress}%` }}
-                        ></div>
-                      </div>
-                      <span className="text-xs text-gray-500">{item.progress}%</span>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 text-right text-gray-400">
-                    {new Date(item.updated_at).toLocaleDateString()}
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
+        {/* HERO SECTION */}
+        <div className="text-center mb-20">
+          <div className="inline-flex items-center gap-2 px-4 py-1.5 mb-8 rounded-full bg-blue-900/10 border border-blue-800 text-xs font-bold text-[#38bdf8] uppercase tracking-wide">
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-sky-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-sky-500"></span>
+            </span>
+            System Operational
+          </div>
+          
+          <h1 className="text-5xl md:text-7xl font-extrabold tracking-tight mb-8 leading-tight">
+            Compliance on <br />
+            <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#38bdf8] to-blue-600">
+              Autopilot.
+            </span>
+          </h1>
+          
+          <p className="text-xl text-gray-400 max-w-2xl mx-auto mb-10 leading-relaxed">
+            Stop manually chasing evidence. Vibe ingests your Excel standards, schedules autonomous audits, and uses Vision AI to validate proof.
+          </p>
+
+          <div className="flex flex-col sm:flex-row justify-center gap-4">
+            <Link href="/dashboard">
+              <button className="w-full sm:w-auto px-8 py-4 bg-[#38bdf8] text-[#0f172a] font-bold rounded-xl hover:bg-sky-400 transition shadow-lg shadow-sky-900/20 flex items-center justify-center gap-2">
+                Launch Console <HiArrowRight />
+              </button>
+            </Link>
+            <button className="w-full sm:w-auto px-8 py-4 bg-gray-900 border border-gray-800 text-gray-300 font-medium rounded-xl hover:bg-gray-800 transition">
+              View Architecture
+            </button>
+          </div>
+        </div>
+
+        {/* THE TERMINAL (UPDATED SCRIPT) */}
+        <div className="relative mx-auto max-w-4xl rounded-xl border border-gray-800 bg-[#020617] shadow-2xl overflow-hidden mb-32 group hover:border-gray-700 transition duration-500">
+            {/* Terminal Header */}
+            <div className="flex items-center justify-between px-4 py-3 bg-gray-900/50 border-b border-gray-800">
+                <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 rounded-full bg-red-500/80"></div>
+                    <div className="w-3 h-3 rounded-full bg-yellow-500/80"></div>
+                    <div className="w-3 h-3 rounded-full bg-green-500/80"></div>
+                </div>
+                <div className="text-xs text-gray-500 font-mono">vibe-auditor — bash — 80x24</div>
+            </div>
+            
+            {/* Terminal Content */}
+            <div className="p-6 font-mono text-sm leading-relaxed h-80 overflow-hidden relative">
+                <div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-[#020617]/90 z-10"></div>
+                
+                <div className="space-y-2">
+                    <div className="text-gray-400">$ vibe schedule --run="Monthly CMMC Scan"</div>
+                    <div className="text-blue-400">[i] Initializing Autonomous Auditor...</div>
+                    <div className="text-gray-300">[+] Loaded Standard: <span className="text-white font-bold">CMMC Level 2 (Imported)</span></div>
+                    <div className="text-gray-300">[+] Target Asset: <span className="text-white font-bold">Production AWS (us-east-1)</span></div>
+                    <div className="text-yellow-400 animate-pulse">[~] Scanning S3 Buckets for Public Access...</div>
+                    <div className="text-gray-500 ml-4"> Checking bucket: customer-logs-backup...</div>
+                    <div className="text-red-400 font-bold ml-4">[!] ALERT: Bucket is Public (Violates AC.3.1)</div>
+                    <div className="text-gray-300">[+] Capturing Evidence Screenshot... Done.</div>
+                    <div className="text-blue-400">[i] AI Analyzer Verdict:</div>
+                    <div className="text-gray-300 ml-4">Confidence: 98%</div>
+                    <div className="text-gray-300 ml-4">Status: <span className="text-red-400">FAILED</span></div>
+                    <div className="text-green-400">[✓] Triggering Jira Integration...</div>
+                    <div className="text-white"> Created Ticket: <span className="underline decoration-dashed">SEC-402</span></div>
+                    <div className="text-gray-400">$ _</div>
+                </div>
+            </div>
+        </div>
+
+        {/* FEATURE GRID */}
+        <div id="features" className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-20">
+          <div className="p-8 rounded-2xl bg-[#1e293b]/30 border border-gray-800 hover:border-[#38bdf8]/50 transition duration-300 group">
+            <div className="w-12 h-12 bg-blue-900/20 rounded-xl flex items-center justify-center mb-6 group-hover:scale-110 transition">
+              <HiChip className="w-6 h-6 text-[#38bdf8]" />
+            </div>
+            <h3 className="text-xl font-bold mb-3 text-white">Universal Ingest</h3>
+            <p className="text-gray-400 leading-relaxed">
+              Don't change your process. Drag & drop any spreadsheet (NIST, ISO, Custom) and Vibe builds the audit environment instantly.
+            </p>
+          </div>
+
+          <div className="p-8 rounded-2xl bg-[#1e293b]/30 border border-gray-800 hover:border-[#38bdf8]/50 transition duration-300 group">
+            <div className="w-12 h-12 bg-purple-900/20 rounded-xl flex items-center justify-center mb-6 group-hover:scale-110 transition">
+              <HiLightningBolt className="w-6 h-6 text-purple-400" />
+            </div>
+            <h3 className="text-xl font-bold mb-3 text-white">Autonomous Scheduler</h3>
+            <p className="text-gray-400 leading-relaxed">
+              Set it and forget it. Define recurring audit rules (Weekly, Monthly) and let the "Run Now" API handle the heavy lifting.
+            </p>
+          </div>
+
+          <div className="p-8 rounded-2xl bg-[#1e293b]/30 border border-gray-800 hover:border-[#38bdf8]/50 transition duration-300 group">
+            <div className="w-12 h-12 bg-green-900/20 rounded-xl flex items-center justify-center mb-6 group-hover:scale-110 transition">
+              <HiShieldCheck className="w-6 h-6 text-green-400" />
+            </div>
+            <h3 className="text-xl font-bold mb-3 text-white">Self-Healing</h3>
+            <p className="text-gray-400 leading-relaxed">
+              Closed-loop security. When AI detects a failure, it auto-creates Jira tickets and verifies the fix when closed.
+            </p>
+          </div>
+        </div>
+
+      </main>
+      
+      <footer className="border-t border-gray-900 py-12 text-center text-gray-600 text-sm">
+        <p>&copy; 2024 Vibe Compliance Studio. </p>
+      </footer>
     </div>
   );
 }

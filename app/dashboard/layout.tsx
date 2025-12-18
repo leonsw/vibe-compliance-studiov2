@@ -36,7 +36,8 @@ export default function DashboardLayout({
     { name: "Asset Inventory", href: "/dashboard/assets", icon: Server },
 
     // 3. The "Why" (What is wrong?)
-    { name: "Risk Register", href: "/dashboard/risks", icon: AlertTriangle },
+    { name: "Risk Register", href: "/dashboard/risks/register", icon: AlertTriangle },
+    { name: "Risk Manager", href: "/dashboard/risks/manager", icon: AlertTriangle },
 
     // 4. The "How" (Execution)
     { name: "Assessments", href: "/dashboard/assessments", icon: ClipboardCheck },
