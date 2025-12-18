@@ -1,531 +1,272 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
+import { supabase } from "@/lib/supabaseClient";
 import { useParams } from "next/navigation";
-import { supabase } from "@/lib/supabaseClient"; 
-import {
-  HiChevronDown,
-  HiChevronRight,
-  HiCheckCircle,
-  HiExclamationCircle, // Used for Risk Icon
-  HiCloudUpload,
-  HiChatAlt2,
-  HiLightningBolt,
-  HiDocumentSearch,
-  HiPaperAirplane,
-  HiExternalLink,
-  HiClock,
-  HiXCircle,    // New: Fail Icon
-  HiMinusCircle // New: N/A Icon
-} from "react-icons/hi";
+import { 
+  ArrowLeft, 
+  ShieldCheck, 
+  Server, 
+  AlertCircle, 
+  CheckCircle2, 
+  BrainCircuit,
+  ChevronDown,
+  ChevronUp,
+  RefreshCw
+} from "lucide-react";
+import Link from "next/link";
 
-// --- Types ---
-interface Evidence {
-  id: string;
-  name: string;
-  source_type: 'Integration' | 'Policy_AI' | 'Manual';
-  status: 'Verified' | 'Pending' | 'Missing' | 'Failed';
-  url?: string;
-  snippet?: string;
-  ai_feedback?: string;
-  confidence_score?: number;
-}
-
-interface Control {
-  id: string; 
-  control_code: string; 
-  family: string;
-  description: string;
-  status: 'Compliant' | 'Non-Compliant' | 'Review Required' | 'Missing' | 'Not Started' | 'Failed' | 'N/A'; // Added N/A
-  evidence?: Evidence[];
-}
-
-interface ChatMessage {
-  role: 'user' | 'ai';
-  content: string;
-}
-
-export default function AssessmentWorkbench() {
-  const params = useParams();
-  const assessmentId = params?.id as string;
-
-  // --- Data State ---
+export default function AssessmentDetail() {
+  const { id } = useParams();
   const [assessment, setAssessment] = useState<any>(null);
-  const [controls, setControls] = useState<Control[]>([]);
+  const [controls, setControls] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   
-  // --- UI State ---
-  const [expandedControl, setExpandedControl] = useState<string | null>(null);
-  const [scanLoadingId, setScanLoadingId] = useState<string | null>(null);
-  const [manualUploadLoadingId, setManualUploadLoadingId] = useState<string | null>(null);
-  const manualUploadInputRefs = useRef<{ [key: string]: HTMLInputElement | null }>({});
+  // UI State
+  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
+  const [analyzingIds, setAnalyzingIds] = useState<Set<string>>(new Set());
 
-  // --- Chat State ---
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    { role: 'ai', content: 'I am ready to help you map controls and find evidence. What should we work on?' }
-  ]);
-  const [input, setInput] = useState("");
-  const [isChatLoading, setIsChatLoading] = useState(false);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  // 1. Fetch Data
+  const fetchData = async () => {
+    if (!id) return;
+    
+    // Only show full loading spinner on first load
+    if (!assessment) setLoading(true);
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  };
-  useEffect(scrollToBottom, [messages]);
+    // A. Fetch Assessment + System Details
+    const { data: asm, error: asmError } = await supabase
+      .from("assessments")
+      .select("*, systems(name, type, criticality)")
+      .eq("id", id)
+      .single();
 
-  // --- Fetch Data ---
-  useEffect(() => {
-    if (!assessmentId) return;
-    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    if (!uuidRegex.test(assessmentId)) return;
+    if (asmError) console.error(asmError);
+    else setAssessment(asm);
 
-    const fetchData = async () => {
-      setLoading(true);
-      
-      const { data: asmData, error: asmError } = await supabase
-        .from("assessments")
-        .select("*")
-        .eq("id", assessmentId)
-        .single();
+    // B. Fetch Controls
+    const { data: ctrls, error: ctrlError } = await supabase
+      .from("controls")
+      .select("*")
+      .eq("assessment_id", id)
+      .order("control_code", { ascending: true });
 
-      if (asmError) console.error("Error fetching assessment:", asmError);
-      else setAssessment(asmData);
+    if (ctrlError) console.error(ctrlError);
+    else setControls(ctrls || []);
 
-      const { data: ctrlData, error: ctrlError } = await supabase
-        .from("controls")
-        .select(`*, evidence (*)`)
-        .eq("assessment_id", assessmentId)
-        .order('control_code', { ascending: true });
-
-      if (ctrlError) console.error("Error fetching controls:", ctrlError);
-      else setControls(ctrlData || []);
-
-      setLoading(false);
-    };
-
-    fetchData();
-  }, [assessmentId]);
-
-  // --- NEW: Handle Control Status Update (Pass/Fail/NA) ---
-  const updateControlStatus = async (e: React.MouseEvent, controlId: string, newStatus: string) => {
-    e.stopPropagation(); // Prevent toggling the accordion
-
-    // 1. Optimistic Update
-    setControls(prev => prev.map(c => c.id === controlId ? { ...c, status: newStatus as any } : c));
-
-    // 2. Database Update
-    const { error } = await supabase
-        .from("controls")
-        .update({ status: newStatus })
-        .eq("id", controlId);
-
-    if (error) {
-        alert("Error updating status");
-        return;
-    }
-
-    // 3. Update Assessment Progress
-    const total = controls.length;
-    const doneCount = controls.map(c => c.id === controlId ? { ...c, status: newStatus } : c)
-                              .filter(c => c.status !== 'Not Started').length;
-    const newProgress = Math.round((doneCount / total) * 100);
-
-    await supabase.from("assessments").update({ progress: newProgress }).eq("id", assessmentId);
-    setAssessment((prev: any) => ({ ...prev, progress: newProgress }));
+    setLoading(false);
   };
 
-  // --- Existing Chat Handler ---
-  const handleSendMessage = async () => {
-    if (!input.trim()) return;
-    const userMessage = input;
-    setInput(""); 
-    setMessages(prev => [...prev, { role: 'user', content: userMessage }]);
-    setIsChatLoading(true);
+  useEffect(() => { fetchData(); }, [id]);
+
+  // Toggle Row Expansion
+  const toggleRow = (controlId: string) => {
+    const newSet = new Set(expandedRows);
+    if (newSet.has(controlId)) newSet.delete(controlId);
+    else newSet.add(controlId);
+    setExpandedRows(newSet);
+  };
+
+  // --- THE INTELLIGENT AI TRIGGER ---
+  const runAIAnalysis = async (controlId: string) => {
+    // 1. UI Feedback: Mark this specific row as "Analyzing"
+    const newAnalyzing = new Set(analyzingIds);
+    newAnalyzing.add(controlId);
+    setAnalyzingIds(newAnalyzing);
 
     try {
-      const response = await fetch('/api/copilot', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: userMessage,
-          context: {
-            assessmentTitle: assessment?.title || "Unknown Assessment",
-            standard: assessment?.standard || "General",
-            visibleControls: controls.map(c => ({
-              id: c.control_code, 
-              status: c.status, 
-              evidenceCount: c.evidence?.length || 0
-            }))
-          }
-        })
-      });
-      const data = await response.json();
-      setMessages(prev => [...prev, { role: 'ai', content: data.reply || "Error connecting to AI." }]);
-    } catch (error) {
-      setMessages(prev => [...prev, { role: 'ai', content: "System Error: Failed to reach Copilot." }]);
-    } finally {
-      setIsChatLoading(false);
-    }
-  };
-
-  // --- Existing Auto-Scan Handler ---
-  const handleAutoScan = async (control: Control) => {
-    setScanLoadingId(control.id);
-    try {
-      const response = await fetch('/api/integrations/github/scan');
-      const data = await response.json();
-
-      if (data.status === 'success') {
-        const { data: newEvidence, error } = await supabase
-          .from("evidence")
-          .insert({
-            control_id: control.id,
-            name: `GitHub MFA Settings (${data.org})`,
-            source_type: 'Integration',
-            status: data.mfa_enabled ? 'Verified' : 'Missing',
-            url: `https://github.com/orgs/${data.org}/settings/security`
-          })
-          .select()
-          .single();
-
-        if (error) throw error;
-        updateControlEvidence(control.id, newEvidence);
-        alert(`Scan Complete: MFA is ${data.mfa_enabled ? 'Enabled' : 'Disabled'}`);
-      } else {
-        alert("Scan Failed: " + data.error);
-      }
-    } catch (err: any) {
-      console.error(err);
-      alert("System Error during scan.");
-    } finally {
-      setScanLoadingId(null);
-    }
-  };
-
-  // --- Existing Policy Mapper ---
-  const handleLinkPolicy = async (control: Control) => {
-    setScanLoadingId(control.id);
-    try {
-        const response = await fetch('/api/policy/map', {
+        const res = await fetch('/api/assessments/analyze', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                controlId: control.id,
-                controlCode: control.control_code,
-                controlDescription: control.description
-            })
+            body: JSON.stringify({ controlId })
         });
 
-        const result = await response.json();
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error);
 
-        if (result.found) {
-            const { data: newEvidence, error } = await supabase
-              .from("evidence")
-              .insert({
-                control_id: control.id,
-                name: result.evidenceData.name, 
-                source_type: 'Policy_AI', 
-                status: 'Pending', 
-                snippet: result.evidenceData.snippet,
-                confidence_score: result.evidenceData.confidence,
-                ai_feedback: `AI matched this policy section with ${result.evidenceData.confidence}% similarity.`
-              })
-              .select()
-              .single();
+        // 2. Success: Refresh data to show the new "Met" status & Justification
+        await fetchData();
+        
+        // Auto-expand the row so the user sees the result immediately
+        const newExpanded = new Set(expandedRows);
+        newExpanded.add(controlId);
+        setExpandedRows(newExpanded);
 
-            if (error) throw error;
-            updateControlEvidence(control.id, newEvidence as any);
-            alert(`Policy Linked!\n\nDocument: ${result.evidenceData.name}\nMatch Score: ${result.evidenceData.confidence}%`);
-        } else {
-            alert("Analysis Complete: No relevant policy documents found.");
-        }
-    } catch (err: any) {
-        console.error(err);
-        alert("Policy Scan Error: " + err.message);
+    } catch (error: any) {
+        console.error(error);
+        alert("AI Analysis Failed: " + error.message);
     } finally {
-        setScanLoadingId(null);
+        // Remove "Analyzing" state
+        const resetAnalyzing = new Set(analyzingIds);
+        resetAnalyzing.delete(controlId);
+        setAnalyzingIds(resetAnalyzing);
     }
   };
 
-  // --- Existing Manual Upload ---
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>, control: Control) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    setScanLoadingId(control.id);
-    setManualUploadLoadingId(control.id);
-
-    try {
-      const path = `${assessmentId}/${control.id}/${Date.now()}_${file.name}`;
-      const { error: uploadError } = await supabase.storage
-        .from("evidence-files")
-        .upload(path, file);
-
-      if (uploadError) throw uploadError;
-
-      const { data: { publicUrl } } = supabase.storage
-        .from("evidence-files")
-        .getPublicUrl(path);
-
-      const { data: newEvidence, error: dbError } = await supabase
-        .from("evidence")
-        .insert({
-          control_id: control.id,
-          name: file.name,
-          source_type: 'Manual',
-          status: 'Pending',
-          url: publicUrl
-        })
-        .select()
-        .single();
-
-      if (dbError) throw dbError;
-      updateControlEvidence(control.id, newEvidence as any);
-
-      // AI Validator
-      fetch('/api/evidence/validate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          evidenceId: newEvidence.id,
-          controlDescription: control.description,
-          fileUrl: publicUrl
-        })
-      })
-      .then(res => res.json())
-      .then(aiResult => {
-        if (aiResult.verdict) {
-            const verdictStatus = aiResult.verdict.status === 'Verified' ? 'Verified' : 'Failed';
-            alert(`AI VERDICT: ${verdictStatus}\n\nReason: ${aiResult.verdict.reasoning}\nConfidence: ${aiResult.verdict.confidence_score}%`);
- 
-            
-        }  
-      });
-
-    } catch (err: any) {
-      console.error("Upload failed:", err);
-      alert("Upload failed: " + err.message);
-    } finally {
-      setScanLoadingId(null);
-      setManualUploadLoadingId(null);
-      if (manualUploadInputRefs.current[control.id]) {
-        manualUploadInputRefs.current[control.id]!.value = "";
-      }
-    }
-  };
-
-  // --- Existing Jira Sync ---
-  const handleSyncJira = async (evidence: Evidence, control: Control) => {
-    const isClosed = confirm(`Simulating Jira Sync for ${evidence.name}...\n\nIs the ticket closed in Jira? (Click OK to simulate 'Done')`);
-    
-    if (isClosed) {
-        try {
-            const { error: evError } = await supabase.from("evidence").update({ status: 'Verified' }).eq("id", evidence.id);
-            if (evError) throw evError;
-
-            const { error: ctrlError } = await supabase.from("controls").update({ status: 'Review Required' }).eq("id", control.id);
-            if (ctrlError) throw ctrlError;
-
-            setControls(prev => prev.map(c => {
-                if (c.id === control.id) {
-                    const updatedEv = c.evidence?.map(e => e.id === evidence.id ? { ...e, status: 'Verified' as 'Verified' } : e);
-                    return { ...c, status: 'Review Required' as 'Review Required', evidence: updatedEv };
-                }
-                return c;
-            }));
-            alert("Synced! Ticket closed. Control marked for review.");
-        } catch (err: any) {
-            console.error("Sync error:", err);
-            alert("Sync failed: " + err.message);
-        }
-    }
-  };
-
-  const updateControlEvidence = (controlId: string, newEvidence: Evidence) => {
-    setControls(prev => prev.map(c => {
-        if (c.id === controlId) {
-          return { ...c, evidence: [...(c.evidence || []), newEvidence] };
-        }
-        return c;
-    }));
-  };
-
-  const toggleControl = (id: string) => {
-    setExpandedControl(expandedControl === id ? null : id);
-  };
-
-  if (loading) return <div className="p-10 text-gray-400 flex items-center gap-2"><HiClock className="animate-spin"/> Loading workbench...</div>;
-  if (!assessment) return <div className="p-10 text-red-400">Assessment not found.</div>;
+  if (loading) return <div className="p-8 text-gray-400">Loading Assessment Context...</div>;
+  if (!assessment) return <div className="p-8 text-red-400">Assessment not found.</div>;
 
   return (
-    <div className="flex h-[calc(100vh-64px)] overflow-hidden bg-[#0f172a] text-gray-300">
+    <div className="p-8 text-gray-300 min-h-screen pb-20">
       
-      {/* LEFT: Control Matrix */}
-      <div className="flex-1 flex flex-col border-r border-gray-800 overflow-hidden">
-        <header className="px-8 py-6 border-b border-gray-800 bg-[#0f172a]">
-            <div className="flex justify-between items-start mb-4">
-                <div>
-                    <h1 className="text-2xl font-bold text-white mb-2">{assessment.title}</h1>
-                    <div className="flex items-center gap-4 text-sm text-gray-400">
-                        <span className="px-2 py-0.5 rounded bg-blue-900/30 text-blue-400 border border-blue-800">{assessment.standard}</span>
-                        <span>{controls.length} Controls Scoped</span>
-                    </div>
+      {/* Header & Context */}
+      <div className="mb-8">
+        <Link href="/dashboard/assessments" className="flex items-center gap-2 text-gray-500 hover:text-white mb-4 transition">
+            <ArrowLeft className="w-4 h-4" /> Back to Manager
+        </Link>
+        
+        <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
+            <div>
+                <h1 className="text-3xl font-bold text-white mb-2">{assessment.title}</h1>
+                <div className="flex items-center gap-4 text-sm text-gray-400">
+                    <span className="flex items-center gap-1 bg-gray-800 px-3 py-1 rounded-full border border-gray-700">
+                        <ShieldCheck className="w-4 h-4 text-[#38bdf8]" />
+                        {assessment.standard}
+                    </span>
+                    
+                    {/* SYSTEM CONTEXT CARD */}
+                    <span className="flex items-center gap-1 bg-gray-800 px-3 py-1 rounded-full border border-gray-700">
+                        <Server className="w-4 h-4 text-purple-400" />
+                        Target: <span className="text-white font-medium">{assessment.systems?.name}</span>
+                        <span className="text-gray-500">({assessment.systems?.type || "Generic System"})</span>
+                    </span>
                 </div>
             </div>
-            <div className="w-full bg-gray-800 h-2 rounded-full overflow-hidden">
-                <div className="bg-gradient-to-r from-green-500 to-[#38bdf8] h-full" style={{ width: `${assessment.progress || 0}%` }}></div>
-            </div>
-        </header>
 
-        <div className="flex-1 overflow-y-auto p-8 space-y-4">
-            {controls.map((control) => (
-                <div key={control.id} className="border border-gray-800 rounded-lg bg-[#1e293b]/50 overflow-hidden">
-                    <div 
-                        onClick={() => toggleControl(control.id)}
-                        className="flex items-center p-4 cursor-pointer hover:bg-gray-800/50 transition group"
-                    >
-                        <div className="mr-4 text-gray-500">
-                            {expandedControl === control.id ? <HiChevronDown size={20}/> : <HiChevronRight size={20}/>}
-                        </div>
-                        <div className="w-24 font-mono text-sm font-bold text-gray-400">{control.control_code}</div>
-                        <div className="flex-1">
-                            <div className="text-gray-200 font-medium">{control.description}</div>
-                            {/* RISK ALERT (Shown if Failed) */}
-                            {(control.status === 'Failed' || control.status === 'Non-Compliant') && (
-                                <div className="mt-1 flex items-center gap-1 text-xs text-red-400 font-bold animate-pulse">
-                                    <HiExclamationCircle /> Risk Record Created
-                                </div>
-                            )}
-                        </div>
-                        
-                        {/* --- NEW: STATUS TOGGLE BUTTONS --- */}
-                        <div className="flex items-center gap-1 ml-4 bg-[#0f172a] p-1 rounded border border-gray-700/50">
-                            <button
-                                onClick={(e) => updateControlStatus(e, control.id, 'Compliant')}
-                                className={`p-1.5 rounded transition ${
-                                    control.status === 'Compliant' ? 'bg-green-600 text-white' : 'text-gray-500 hover:text-green-400'
-                                }`}
-                                title="Pass"
-                            >
-                                <HiCheckCircle size={18} />
-                            </button>
-                            <button
-                                onClick={(e) => updateControlStatus(e, control.id, 'Failed')}
-                                className={`p-1.5 rounded transition ${
-                                    control.status === 'Failed' || control.status === 'Non-Compliant' ? 'bg-red-600 text-white' : 'text-gray-500 hover:text-red-400'
-                                }`}
-                                title="Fail (Creates Risk)"
-                            >
-                                <HiXCircle size={18} />
-                            </button>
-                            <button
-                                onClick={(e) => updateControlStatus(e, control.id, 'N/A')}
-                                className={`p-1.5 rounded transition ${
-                                    control.status === 'N/A' ? 'bg-gray-600 text-white' : 'text-gray-500 hover:text-gray-300'
-                                }`}
-                                title="Not Applicable"
-                            >
-                                <HiMinusCircle size={18} />
-                            </button>
-                        </div>
-                    </div>
-
-                    {expandedControl === control.id && (
-                        <div className="bg-[#0f172a] border-t border-gray-800 p-6">
-                            <h4 className="text-xs font-bold text-gray-500 uppercase mb-4">Evidence</h4>
-                            
-                            <div className="space-y-2 mb-6">
-                                {control.evidence?.length === 0 ? (
-                                    <p className="text-sm text-gray-500 italic">No evidence linked.</p>
-                                ) : (
-                                    control.evidence?.map((ev) => (
-                                        <div key={ev.id} className="p-3 bg-gray-900 border border-gray-800 rounded mb-2 flex justify-between items-center">
-                                            <div className="flex items-center gap-2">
-                                                {ev.source_type === 'Integration' && <HiLightningBolt className="text-blue-400"/>}
-                                                {ev.source_type === 'Policy_AI' && <HiDocumentSearch className="text-purple-400"/>}
-                                                {ev.source_type === 'Manual' && <HiCloudUpload className="text-gray-400"/>}
-                                                
-                                                <div className="flex flex-col">
-                                                    <span className="text-sm text-white flex items-center gap-2">
-                                                        {ev.name}
-                                                        {ev.url && (
-                                                            <a href={ev.url} target="_blank" rel="noopener noreferrer" className="text-gray-500 hover:text-blue-400">
-                                                                <HiExternalLink />
-                                                            </a>
-                                                        )}
-                                                    </span>
-                                                    {ev.confidence_score !== undefined && ev.confidence_score > 0 && (
-                                                        <span className={`text-[10px] ${ev.confidence_score > 80 ? 'text-green-400' : 'text-yellow-400'}`}>
-                                                        AI Confidence: {ev.confidence_score}%
-                                                        </span>
-                                                    )}
-                                                </div>
-                                            </div>
-                                    
-                                            <div className="flex items-center gap-3">
-                                                {ev.name.includes("Remediation Ticket") && ev.status !== 'Verified' && (
-                                                    <button 
-                                                        onClick={() => handleSyncJira(ev, control)}
-                                                        className="text-[10px] px-2 py-1 bg-blue-900/30 text-blue-300 border border-blue-800 rounded hover:bg-blue-800 transition"
-                                                    >
-                                                        Sync Status
-                                                    </button>
-                                                )}
-                                                <span className={`text-xs px-2 py-0.5 rounded border ${
-                                                    ev.status === 'Verified' ? 'text-green-400 border-green-900 bg-green-900/20' : 
-                                                    ev.status === 'Failed' ? 'text-red-400 border-red-900 bg-red-900/20' :
-                                                    ev.status === 'Missing' ? 'text-gray-400 border-gray-700 bg-gray-900/50' :
-                                                    'text-yellow-400 border-yellow-900 bg-yellow-900/20'
-                                                }`}>
-                                                    {ev.status}
-                                                </span>
-                                            </div>
-                                        </div>
-                                    ))
-                                )}
-                            </div>
-
-                            <div className="flex gap-3 mt-4 border-t border-gray-800 pt-4">
-                                <input
-                                    type="file"
-                                    className="hidden"
-                                    ref={(el) => { manualUploadInputRefs.current[control.id] = el; }}
-                                    onChange={(e) => handleFileUpload(e, control)}
-                                />
-
-                                <button 
-                                    onClick={() => manualUploadInputRefs.current[control.id]?.click()}
-                                    disabled={manualUploadLoadingId === control.id}
-                                    className="flex items-center gap-2 px-4 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded text-xs font-medium text-white transition disabled:opacity-50"
-                                >
-                                    <HiCloudUpload className={manualUploadLoadingId === control.id ? "animate-spin" : "text-gray-400"}/> 
-                                    {manualUploadLoadingId === control.id ? "Uploading..." : "Upload Evidence"}
-                                </button>
-
-                                <button 
-                                    onClick={() => handleAutoScan(control)}
-                                    disabled={scanLoadingId === control.id}
-                                    className="flex items-center gap-2 px-4 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded text-xs font-medium text-white transition disabled:opacity-50"
-                                >
-                                    <HiLightningBolt className={scanLoadingId === control.id ? "animate-spin" : "text-yellow-400"}/> 
-                                    {scanLoadingId === control.id ? "Scanning..." : "Auto-Scan GitHub"}
-                                </button>
-                                
-                                <button 
-                                    onClick={() => handleLinkPolicy(control)}
-                                    disabled={scanLoadingId === control.id}
-                                    className="flex items-center gap-2 px-4 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded text-xs font-medium text-white transition disabled:opacity-50"
-                                >
-                                    <HiDocumentSearch className={scanLoadingId === control.id ? "animate-spin" : "text-purple-400"}/> 
-                                    {scanLoadingId === control.id ? "Analyzing..." : "Link Policy Document"}
-                                </button>
-                            </div>
-                        </div>
-                    )}
+            {/* Global Stats */}
+            <div className="flex gap-4 bg-[#1e293b] p-3 rounded-xl border border-gray-800">
+                <div className="text-center px-4">
+                    <div className="text-2xl font-bold text-white">{controls.length}</div>
+                    <div className="text-xs text-gray-500">Total</div>
                 </div>
-            ))}
+                <div className="text-center px-4 border-l border-gray-700">
+                    <div className="text-2xl font-bold text-green-400">
+                        {controls.filter(c => c.status === 'Met').length}
+                    </div>
+                    <div className="text-xs text-gray-500">Met</div>
+                </div>
+                <div className="text-center px-4 border-l border-gray-700">
+                    <div className="text-2xl font-bold text-red-400">
+                        {controls.filter(c => c.status === 'Not Met').length}
+                    </div>
+                    <div className="text-xs text-gray-500">Gaps</div>
+                </div>
+            </div>
         </div>
       </div>
-     </div>
+
+      {/* Controls List */}
+      <div className="bg-[#1e293b]/50 border border-gray-800 rounded-xl overflow-hidden shadow-xl">
+        <div className="grid grid-cols-12 bg-[#0f172a] p-4 text-xs font-bold text-gray-500 uppercase tracking-wider border-b border-gray-800">
+            <div className="col-span-2">Control ID</div>
+            <div className="col-span-6">Description</div>
+            <div className="col-span-2 text-center">Status</div>
+            <div className="col-span-2 text-right">Action</div>
+        </div>
+
+        {controls.map((ctrl) => {
+            const isAnalyzing = analyzingIds.has(ctrl.id);
+            
+            return (
+            <div key={ctrl.id} className="border-b border-gray-800/50 hover:bg-white/5 transition group">
+                {/* Main Row */}
+                <div className="grid grid-cols-12 p-4 items-center">
+                    <div className="col-span-2 font-mono text-[#38bdf8] font-bold">
+                        {ctrl.control_code}
+                    </div>
+                    <div className="col-span-6 pr-4">
+                        <p className="text-sm text-gray-300 line-clamp-2">{ctrl.description}</p>
+                    </div>
+                    <div className="col-span-2 text-center">
+                        {isAnalyzing ? (
+                            <span className="px-2 py-1 rounded text-xs font-bold bg-purple-900/20 text-purple-400 animate-pulse flex items-center justify-center gap-1">
+                                <RefreshCw className="w-3 h-3 animate-spin"/> Analyzing
+                            </span>
+                        ) : (
+                            <span className={`px-2 py-1 rounded text-xs font-bold 
+                                ${ctrl.status === 'Met' ? 'bg-green-900/20 text-green-400 border border-green-900/30' : 
+                                  ctrl.status === 'Not Met' ? 'bg-red-900/20 text-red-400 border border-red-900/30' : 
+                                  ctrl.status === 'Partially Met' ? 'bg-yellow-900/20 text-yellow-400 border border-yellow-900/30' :
+                                  'bg-gray-800 text-gray-500'}`}>
+                                {ctrl.status}
+                            </span>
+                        )}
+                    </div>
+                    <div className="col-span-2 flex justify-end gap-2">
+                        <button 
+                            onClick={() => runAIAnalysis(ctrl.id)}
+                            disabled={isAnalyzing}
+                            className={`p-2 rounded transition flex items-center gap-1 text-xs font-bold border 
+                                ${isAnalyzing 
+                                    ? 'bg-gray-800 text-gray-500 cursor-not-allowed' 
+                                    : 'text-purple-400 hover:bg-purple-900/20 border-transparent hover:border-purple-500/50'}`}
+                            title="Run AI Analysis"
+                        >
+                            <BrainCircuit className={`w-4 h-4 ${isAnalyzing ? 'animate-pulse' : ''}`} /> 
+                            {isAnalyzing ? "..." : "AI Check"}
+                        </button>
+                        <button 
+                            onClick={() => toggleRow(ctrl.id)}
+                            className="p-2 text-gray-500 hover:text-white hover:bg-gray-700 rounded transition"
+                        >
+                            {expandedRows.has(ctrl.id) ? <ChevronUp className="w-4 h-4"/> : <ChevronDown className="w-4 h-4"/>}
+                        </button>
+                    </div>
+                </div>
+
+                {/* Expanded Details (Evidence & Justification) */}
+                {expandedRows.has(ctrl.id) && (
+                    <div className="bg-[#0f172a]/50 p-6 border-t border-gray-800 ml-4 border-l-2 border-l-[#38bdf8] shadow-inner">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                            <div>
+                                <h4 className="text-xs font-bold text-gray-500 uppercase mb-2">Requirement</h4>
+                                <p className="text-sm text-gray-300 mb-6 bg-[#1e293b] p-3 rounded border border-gray-800">{ctrl.description}</p>
+                                
+                                <h4 className="text-xs font-bold text-gray-500 uppercase mb-2 flex items-center gap-2">
+                                    <BrainCircuit className="w-3 h-3 text-purple-400" /> AI Verdict & Justification
+                                </h4>
+                                {ctrl.ai_justification ? (
+                                    <p className="text-sm text-gray-300 bg-purple-900/10 p-4 rounded border border-purple-900/30 leading-relaxed">
+                                        {ctrl.ai_justification}
+                                    </p>
+                                ) : (
+                                    <p className="text-sm text-gray-500 italic p-4 bg-gray-900 rounded">
+                                        Click "AI Check" to analyze this control against your documents.
+                                    </p>
+                                )}
+                            </div>
+                            
+                            <div>
+                                <h4 className="text-xs font-bold text-gray-500 uppercase mb-2">Evidence Links</h4>
+                                {ctrl.evidence_links && ctrl.evidence_links.length > 0 ? (
+                                    <ul className="space-y-2">
+                                        {ctrl.evidence_links.map((link: string, i: number) => (
+                                            <li key={i} className="flex items-center gap-2 text-sm bg-gray-900 p-2 rounded hover:bg-gray-800 transition">
+                                                <CheckCircle2 className="w-4 h-4 text-green-400 flex-shrink-0" /> 
+                                                <a href={link} target="_blank" className="text-[#38bdf8] hover:underline truncate">
+                                                    Evidence Document {i+1}
+                                                </a>
+                                            </li>
+                                        ))}
+                                    </ul>
+                                ) : (
+                                    <div className="p-6 border border-dashed border-gray-700 rounded text-center">
+                                        <AlertCircle className="w-6 h-6 text-gray-600 mx-auto mb-2" />
+                                        <p className="text-xs text-gray-500">No evidence linked yet.</p>
+                                    </div>
+                                )}
+                                
+                                {ctrl.last_assessed_at && (
+                                    <div className="mt-4 text-right">
+                                        <span className="text-[10px] text-gray-600 uppercase font-bold">Last Check: </span>
+                                        <span className="text-xs text-gray-500">{new Date(ctrl.last_assessed_at).toLocaleString()}</span>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                )}
+            </div>
+        )})}
+      </div>
+    </div>
   );
 }

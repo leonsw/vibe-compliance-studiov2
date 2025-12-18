@@ -43,19 +43,21 @@ export default function NewAssessmentWizard() {
     fetchData();
   }, []);
 
-  // 2. The "Cloning" Logic
+  // 2. The "Cloning" Logic (Updated)
   const handleCreate = async () => {
     if (!name || !selectedSystem || !selectedStandardId) return;
     setIsSubmitting(true);
 
     try {
       // A. Create the Assessment Container
+      // NOW SAVING: standard_id (Critical for AI lookup)
       const { data: assessment, error: asmError } = await supabase
         .from("assessments")
         .insert({
           title: name,
           system_id: selectedSystem,
-          standard: selectedStandardName, // Store the name for display (e.g. "NIST 800-171")
+          standard: selectedStandardName, 
+          standard_id: selectedStandardId, // <--- ADDED THIS
           status: 'In Progress',
           progress: 0
         })
@@ -64,14 +66,14 @@ export default function NewAssessmentWizard() {
 
       if (asmError) throw asmError;
 
-      // B. Fetch the Master Controls (From the imported spreadsheet)
+      // B. Fetch the Master Controls
       const { data: masters } = await supabase
         .from("master_controls")
         .select("*")
         .eq("standard_id", selectedStandardId);
 
       if (!masters || masters.length === 0) {
-        alert("Error: This standard has no controls indexed. Did the import finish?");
+        alert("Error: This standard has no controls indexed.");
         setIsSubmitting(false);
         return;
       }
