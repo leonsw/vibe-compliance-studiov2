@@ -1,138 +1,50 @@
-"use client";
+import { redirect } from "next/navigation";
+import { createClient } from "@/utils/supabase/server";
+import Sidebar from "@/components/sidebar"; // Assuming you have this, or I can provide a simple one
+import TopNav from "@/components/topnav";   // Optional: If you use a top navigation bar
 
-import { useState } from "react";
-import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { 
-  LayoutDashboard, 
-  Server, 
-  AlertTriangle, 
-  ClipboardCheck, 
-  Calendar, 
-  BookOpen, 
-  FileText, 
-  BarChart3, 
-  Zap, 
-  Settings,
-  Menu,
-  X 
-} from "lucide-react";
-import { HiMiniFolder } from "react-icons/hi2";
-
-export default function DashboardLayout({
+export default async function DashboardLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const pathname = usePathname();
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  // 1. Initialize Supabase on the Server
+  const supabase = await createClient();
+  // 2. Fetch the User (Secure Server-Side Check)
+  const { data: { user }, error } = await supabase.auth.getUser();
 
-  // Navigation Config
-  const navigation = [
-    // 1. The Command Center
-    { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
+  // 3. Security Fallback: If no user, kick to login
+  // (Your middleware should catch this first, but this is a safety net)
+  if (error || !user) {
+    redirect("/login");
+  }
 
-    // 2. The Foundation (What are we protecting?)
-    { name: "Asset Inventory", href: "/dashboard/assets", icon: Server },
-
-    // 3. The "Why" (What is wrong?)
-    { name: "Risk Register", href: "/dashboard/risks/register", icon: AlertTriangle },
-    { name: "Risk Manager", href: "/dashboard/risks/manager", icon: AlertTriangle },
-
-    // 4. The "How" (Execution)
-    { name: "Assessments", href: "/dashboard/assessments", icon: ClipboardCheck },
-    { name: "Schedules", href: "/dashboard/schedules", icon: Calendar },
-    { name: "Standards Library", href: "/dashboard/standards", icon: BookOpen },
-
-    // 5. The "Proof" (Knowledge Base)
-    { name: "Documents & Policy", href: "/dashboard/documents", icon: FileText },
-    { name: "Reports", href: "/dashboard/reports", icon: BarChart3 },
-
-    // 6. Configuration (System)
-    { name: "Integrations", href: "/dashboard/integrations", icon: Zap }, // "Zap" is the Lightning Bolt
-    { name: "Admin Settings", href: "/dashboard/admin", icon: Settings },
-];
+  // 4. Fetch Profile (Optional: If your Sidebar needs the name/role)
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("*")
+    .eq("id", user.id)
+    .single();
 
   return (
-    <div className="min-h-screen bg-[#0f172a] flex">
+    <div className="flex min-h-screen bg-[#0f172a]">
       
-      {/* MOBILE OVERLAY */}
-      {isMobileMenuOpen && (
-        <div className="fixed inset-0 z-40 bg-black/50 lg:hidden" onClick={() => setIsMobileMenuOpen(false)} />
-      )}
-
-      {/* SIDEBAR */}
-      <aside className={`
-        fixed lg:static inset-y-0 left-0 z-50 w-64 bg-[#1e293b]/50 border-r border-gray-800 
-        transform transition-transform duration-200 ease-in-out
-        ${isMobileMenuOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}
-      `}>
-        {/* Logo Area */}
-        <div className="h-16 flex items-center px-6 border-b border-gray-800">
-          <div className="text-xl font-bold tracking-tighter text-white">
-            Vibe<span className="text-[#38bdf8]">Compliance</span>
-          </div>
-          <button 
-            className="ml-auto lg:hidden text-gray-400"
-            onClick={() => setIsMobileMenuOpen(false)}
-          >
-            <X className="w-6 h-6" />
-          </button>
-        </div>
-
-        {/* Nav Links */}
-        <nav className="p-4 space-y-1">
-          {navigation.map((item) => {
-            const isActive = pathname === item.href;
-            return (
-              <Link
-                key={item.name}
-                href={item.href}
-                className={`
-                  flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors
-                  ${isActive 
-                    ? "bg-[#38bdf8]/10 text-[#38bdf8]" 
-                    : "text-gray-400 hover:bg-gray-800 hover:text-white"}
-                `}
-              >
-                <item.icon className="w-5 h-5" />
-                {item.name}
-              </Link>
-            );
-          })}
-        </nav>
-
-        {/* User Profile (Bottom) */}
-        <div className="absolute bottom-0 w-full p-4 border-t border-gray-800">
-          <div className="flex items-center gap-3 px-3 py-2">
-            <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-500 to-purple-500 flex items-center justify-center text-xs font-bold text-white">
-              LW
-            </div>
-            <div className="text-sm">
-              <p className="text-white font-medium">Leon W.</p>
-              <p className="text-gray-500 text-xs">Admin</p>
-            </div>
-          </div>
-        </div>
+      {/* SIDEBAR - Fixed on the left */}
+      <aside className="w-64 fixed inset-y-0 z-50 hidden md:flex flex-col border-r border-gray-800 bg-[#1e293b]">
+        {/* Pass user profile to Sidebar so it can display "Hello, Admin" */}
+        <Sidebar user={profile} /> 
       </aside>
 
-      {/* MAIN CONTENT WRAPPER */}
-      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-        {/* Mobile Header */}
-        <header className="lg:hidden h-16 flex items-center px-4 border-b border-gray-800 bg-[#0f172a]">
-          <button 
-            className="text-gray-400 p-2 -ml-2"
-            onClick={() => setIsMobileMenuOpen(true)}
-          >
-            <Menu className="w-6 h-6" />
-          </button>
-          <span className="ml-4 font-bold text-white">Vibe Compliance</span>
-        </header>
+      {/* MAIN CONTENT AREA */}
+      <div className="flex-1 md:ml-64 flex flex-col min-h-screen">
+        
+        {/* TOP NAV (Mobile toggle & Breadcrumbs usually go here) */}
+        {/* <TopNav user={profile} /> */}
 
-        {/* Page Content Injection Point */}
-        <main className="flex-1 overflow-auto relative">
-          {children}
+        <main className="flex-1 p-0 overflow-y-auto">
+           {children}
         </main>
+        
       </div>
     </div>
   );
