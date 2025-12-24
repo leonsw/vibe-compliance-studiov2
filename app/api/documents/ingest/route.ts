@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { createClient } from "@/utils/supabase/server"; // Use Server Client for Auth Context
 import OpenAI from "openai";
 import { smartSplit } from "@/lib/ai/textSplitter";
 
@@ -7,26 +7,37 @@ import { smartSplit } from "@/lib/ai/textSplitter";
 export const runtime = "nodejs"; 
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
 
 export async function POST(req: Request) {
   try {
     const formData = await req.formData();
     const file = formData.get("file") as File;
-    const documentName = formData.get("name") as string;
+    const policyId = formData.get("policyId") as string; // Frontend sends this now
     
-    // Grab the Storage Links (sent from frontend)
-    const publicUrl = formData.get("url") as string || null;
-    const storagePath = formData.get("storage_path") as string || null;
-
-    if (!file || !documentName) {
-        return NextResponse.json({ error: "Missing file or name" }, { status: 400 });
+    if (!file || !policyId) {
+        return NextResponse.json({ error: "Missing file or policyId" }, { status: 400 });
     }
 
-    // --- 1. EXTRACT TEXT (Your Working Code) ---
+    // 1. AUTH & ORG CHECK (Crucial for RLS)
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    
+    if (!user) {
+        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    // Get the User's Organization ID so we can tag the chunks correctly
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("organization_id")
+      .eq("id", user.id)
+      .single();
+
+    if (!profile?.organization_id) {
+        return NextResponse.json({ error: "User has no organization linked." }, { status: 400 });
+    }
+
+    // --- 2. EXTRACT TEXT (Your Working PDFJS Code) ---
     let rawText = "";
 
     if (file.type === "application/pdf") {
@@ -67,27 +78,14 @@ export async function POST(req: Request) {
         throw new Error("Extracted text is empty or too short.");
     }
 
-    // --- 2. SAVE TO DATABASE (The Missing Part) ---
-    // Note: This writes to the 'documents' table, NOT 'standards'.
-    const { data: doc, error: docError } = await supabase
-      .from("documents")
-      .insert({
-        name: documentName,
-        status: "Processing",
-        file_size: file.size,
-        chunk_count: 0,
-        url: publicUrl,           
-        storage_path: storagePath 
-      })
-      .select()
-      .single();
-
-    if (docError) throw docError;
-
     // --- 3. CHUNK & EMBED ---
+    // Note: If you don't have smartSplit locally, you can use a simple slice loop.
+    // Assuming smartSplit exists based on your imports.
     const chunks = smartSplit(rawText, 1000, 200);
     const chunkData = [];
     
+    console.log(`Debug: Processing ${chunks.length} chunks for Policy ${policyId}`);
+
     for (let i = 0; i < chunks.length; i++) {
       const text = chunks[i];
       if (!text || text.trim().length === 0) continue;
@@ -99,7 +97,8 @@ export async function POST(req: Request) {
         });
 
         chunkData.push({
-            document_id: doc.id,
+            policy_id: policyId, // <--- UPDATED to match new schema
+            organization_id: profile.organization_id, // <--- ADDED for RLS
             content: text,
             embedding: embeddingResponse.data[0].embedding,
             chunk_index: i,
@@ -110,19 +109,27 @@ export async function POST(req: Request) {
     }
 
     // --- 4. SAVE CHUNKS & UPDATE STATUS ---
-    const { error: insertError } = await supabase
-      .from("document_chunks")
-      .insert(chunkData);
+    if (chunkData.length > 0) {
+        const { error: insertError } = await supabase
+            .from("document_chunks")
+            .insert(chunkData);
 
-    if (insertError) throw insertError;
+        if (insertError) {
+            console.error("Chunk Insert Error:", insertError);
+            throw insertError;
+        }
 
-    await supabase
-      .from("documents")
-      .update({ status: "Ready", chunk_count: chunks.length })
-      .eq("id", doc.id);
+        // Update the main policy record with the count
+        await supabase
+            .from("policies") // <--- UPDATED table name
+            .update({ 
+                status: "Published", 
+                chunk_count: chunks.length 
+            })
+            .eq("id", policyId);
+    }
 
     // --- 5. RETURN SUCCESS ---
-    // We specifically return 'chunks' so the frontend alert says "15 chunks created" instead of "undefined"
     return NextResponse.json({ success: true, chunks: chunks.length });
 
   } catch (error: any) {

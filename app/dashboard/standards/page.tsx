@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { supabase } from "@/lib/supabaseClient";
+import { supabase } from "@/lib/supabaseClient"; // Ensure this path matches your project
 import { 
   Upload, 
   Library, 
@@ -10,7 +10,8 @@ import {
   DownloadCloud, 
   Sparkles, 
   X, 
-  FileSpreadsheet 
+  FileSpreadsheet, 
+  AlertTriangle 
 } from "lucide-react";
 
 export default function StandardsLibrary() {
@@ -25,10 +26,13 @@ export default function StandardsLibrary() {
   
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Modal State
+  // Modal State: Inspection
   const [inspectStd, setInspectStd] = useState<any | null>(null);
   const [controls, setControls] = useState<any[]>([]);
   const [loadingControls, setLoadingControls] = useState(false);
+
+  // Modal State: Confirmation (The missing piece)
+  const [confirmData, setConfirmData] = useState<{file: File, name: string} | null>(null);
 
   // --- 1. FETCH STANDARDS ---
   const fetchStandards = async () => {
@@ -55,36 +59,22 @@ export default function StandardsLibrary() {
     }
   };
 
-  // --- 3. UPLOAD HANDLER ---
-  const handleIngest = async () => {
-    if (!file || !stdName) return;
+  // --- 3. UPLOAD HANDLER (Fixed Logic) ---
+  const handleIngest = async (fileToUse = file, force = false) => {
+    // If called via button click, fileToUse will be the state 'file'
+    // If called via modal, fileToUse will be passed explicitly
+    if (!fileToUse) return;
+    if (!stdName && !force) return; // Allow empty name if forcing (name is in file)
+
     setIsUploading(true);
-    setUploadStatus("Uploading File...");
+    setUploadStatus(force ? "Overwriting..." : "Uploading File...");
 
     try {
-      // A. Upload to Storage
-      const fileExt = file.name.split('.').pop();
-      const fileName = `${Date.now()}_${stdName.replace(/\s/g, '_')}.${fileExt}`;
-      const filePath = `imports/${fileName}`;
-
-      const { error: uploadError } = await supabase.storage
-        .from("standards-files")
-        .upload(filePath, file);
-
-      if (uploadError) throw uploadError;
-
-      const { data: publicUrlData } = supabase.storage
-        .from("standards-files")
-        .getPublicUrl(filePath);
-
-      // B. Send to API
-      setUploadStatus("Parsing & Indexing...");
-      
+      // We skip Storage upload for now and send file directly to API to handle logic
       const formData = new FormData();
-      formData.append("file", file);
+      formData.append("file", fileToUse);
       formData.append("name", stdName);
-      formData.append("url", publicUrlData.publicUrl);
-      formData.append("storage_path", filePath);
+      if (force) formData.append("force", "true");
 
       const res = await fetch('/api/standards/ingest', {
         method: 'POST',
@@ -92,14 +82,26 @@ export default function StandardsLibrary() {
       });
 
       const result = await res.json();
+
+      // --- DUPLICATE DETECTION ---
+      // If API says "Conflict (409)", we trigger the modal and PAUSE here.
+      if (res.status === 409 && result.requiresConfirmation) {
+        setConfirmData({ file: fileToUse, name: result.standardName });
+        setIsUploading(false);
+        setUploadStatus("");
+        return; // Stop execution, wait for user input
+      }
+
       if (!res.ok) throw new Error(result.error || "Upload failed");
 
-      alert(`Success! Imported ${result.count} master controls.`);
+      // Success!
+      alert(`Success! ${force ? 'Updated' : 'Imported'} ${result.count} controls.`);
       
       // Reset Form
       setFile(null);
       setStdName("");
       setUploadStatus("");
+      setConfirmData(null);
       if (fileInputRef.current) fileInputRef.current.value = "";
       fetchStandards();
 
@@ -113,14 +115,12 @@ export default function StandardsLibrary() {
   };
 
   // --- 4. DELETE HANDLER ---
-  const handleDelete = async (id: string, storagePath?: string) => {
+  const handleDelete = async (id: string) => {
     if (typeof window !== "undefined" && !window.confirm("Delete this standard?")) return;
     
     await supabase.from("standards_library").delete().eq("id", id);
-    
-    if (storagePath) {
-        await supabase.storage.from("standards-files").remove([storagePath]);
-    }
+    // Note: If you want to delete controls too, ensure you have "ON DELETE CASCADE" in SQL
+    // or run: await supabase.from("master_controls").delete().eq("standard_id", id);
     
     fetchStandards();
   };
@@ -143,7 +143,6 @@ export default function StandardsLibrary() {
     }
     setLoadingControls(false);
   }; 
-  // ^^^ This brace closes handleInspect. The error usually happens if this is missing.
 
   // --- RENDER ---
   return (
@@ -171,9 +170,9 @@ export default function StandardsLibrary() {
                 <div 
                     onClick={() => fileInputRef.current?.click()}
                     className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition 
-                        ${file ? 'border-[#38bdf8] bg-blue-900/10' : 'border-gray-700 hover:border-gray-500 hover:bg-gray-800/50'}`}
+                      ${file ? 'border-[#38bdf8] bg-blue-900/10' : 'border-gray-700 hover:border-gray-500 hover:bg-gray-800/50'}`}
                 >
-                    <input type="file" ref={fileInputRef} className="hidden" accept=".csv,.xlsx,.xls" onChange={onFileChange} />
+                    <input type="file" ref={fileInputRef} className="hidden" accept=".csv,.xlsx,.xls,.json" onChange={onFileChange} />
                     
                     {file ? (
                         <div>
@@ -183,7 +182,7 @@ export default function StandardsLibrary() {
                     ) : (
                         <div>
                             <Library className="w-8 h-8 text-gray-500 mx-auto mb-2"/>
-                            <p className="text-gray-400 text-sm">Select Excel / CSV</p>
+                            <p className="text-gray-400 text-sm">Select Excel / JSON</p>
                         </div>
                     )}
                 </div>
@@ -201,7 +200,7 @@ export default function StandardsLibrary() {
                 )}
 
                 <button 
-                    onClick={handleIngest}
+                    onClick={() => handleIngest()} // Arrow function fixes the type error
                     disabled={isUploading || !file}
                     className="w-full py-2.5 bg-[#38bdf8] text-[#0f172a] font-bold rounded hover:bg-sky-400 transition disabled:opacity-50 flex justify-center items-center gap-2"
                 >
@@ -238,19 +237,6 @@ export default function StandardsLibrary() {
                         </div>
                         
                         <div className="flex items-center gap-1">
-                             {/* DOWNLOAD */}
-                             {std.url && (
-                                <a 
-                                   href={std.url} 
-                                   target="_blank" 
-                                   rel="noopener noreferrer"
-                                   className="p-2 text-gray-400 hover:text-white hover:bg-gray-700 rounded transition"
-                                   title="Download Original File"
-                                >
-                                    <DownloadCloud className="w-5 h-5" />
-                                </a>
-                            )}
-
                              {/* INSPECT */}
                              <button 
                                 onClick={() => handleInspect(std)} 
@@ -262,7 +248,7 @@ export default function StandardsLibrary() {
 
                              {/* DELETE */}
                              <button 
-                                onClick={() => handleDelete(std.id, std.storage_path)} 
+                                onClick={() => handleDelete(std.id)} 
                                 className="p-2 text-gray-400 hover:text-red-400 hover:bg-red-900/20 rounded transition"
                                 title="Delete"
                              >
@@ -322,6 +308,42 @@ export default function StandardsLibrary() {
                             </tbody>
                         </table>
                     )}
+                </div>
+            </div>
+        </div>
+      )}
+
+      {/* CONFIRMATION MODAL (Collision Detection) */}
+      {confirmData && (
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-md z-[60] flex items-center justify-center p-4 animate-in fade-in zoom-in duration-200">
+            <div className="bg-[#1e293b] w-full max-w-md rounded-2xl border border-yellow-600/50 shadow-2xl p-6">
+                <div className="flex items-start gap-4 mb-4">
+                    <div className="p-3 bg-yellow-900/30 rounded-full text-yellow-500 border border-yellow-700/50">
+                        <AlertTriangle className="w-8 h-8" />
+                    </div>
+                    <div>
+                        <h3 className="text-xl font-bold text-white">Standard Already Exists</h3>
+                        <p className="text-yellow-500/80 text-sm mt-1">A standard named <strong>"{confirmData.name}"</strong> is already in your library.</p>
+                    </div>
+                </div>
+                
+                <p className="text-gray-400 text-sm leading-relaxed mb-8 pl-14">
+                    Importing this file will <strong>overwrite</strong> the existing standard and replace all its controls. Existing assessments linked to this standard will be updated to point to these new controls.
+                </p>
+
+                <div className="flex gap-3 justify-end">
+                    <button 
+                        onClick={() => { setConfirmData(null); setIsUploading(false); }}
+                        className="px-5 py-2.5 text-gray-400 hover:text-white font-medium hover:bg-gray-800 rounded-lg transition"
+                    >
+                        Cancel
+                    </button>
+                    <button 
+                        onClick={() => handleIngest(confirmData.file, true)}
+                        className="px-5 py-2.5 bg-yellow-600 hover:bg-yellow-500 text-white font-bold rounded-lg shadow-lg hover:shadow-yellow-500/20 transition flex items-center gap-2"
+                    >
+                        <RefreshCw className="w-4 h-4" /> Yes, Overwrite
+                    </button>
                 </div>
             </div>
         </div>

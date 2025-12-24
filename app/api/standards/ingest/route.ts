@@ -1,136 +1,221 @@
-import { createClient } from "@supabase/supabase-js";
-import { openai } from "@ai-sdk/openai";
-import { generateObject } from "ai";
-import { z } from "zod";
-import { NextRequest, NextResponse } from "next/server";
-import * as XLSX from "xlsx";
+import { createClient } from "@/utils/supabase/server";
+import { NextResponse } from "next/server";
+import * as XLSX from "xlsx"; 
 
-export const maxDuration = 60;
-
-const ControlExtractionSchema = z.object({
-  controls: z.array(
-    z.object({
-      control_code: z.string().describe("The unique ID of the control (e.g., 'AC.L1-3.1.1' or '1.1')"),
-      family: z.string().describe("The domain or family this control belongs to (e.g., 'Access Control')"),
-      description: z.string().describe("The full text requirement of the control."),
-    })
-  ),
-});
-
-export async function POST(req: NextRequest) {
+export async function POST(req: Request) {
   try {
+    console.log("--- STARTING FINAL CMMC INGEST (FIXED) ---");
     const formData = await req.formData();
-    const file = formData.get("file") as File | null;
-    const standardName = (formData.get("standardName") || formData.get("name")) as string | null;
+    const file = formData.get("file") as File;
+    const forceUpdate = formData.get("force") === "true"; 
 
-    // --- NEW: Grab Storage Details ---
-    const publicUrl = formData.get("url") as string || null;
-    const storagePath = formData.get("storage_path") as string || null;
+    if (!file) return NextResponse.json({ error: "No file uploaded" }, { status: 400 });
 
-    if (!file || !standardName) {
-      return NextResponse.json({ error: "Missing file or standard name." }, { status: 400 });
-    }
+    const supabase = await createClient();
 
-    // 1. Parse File
-    let rawText = "";
-    const buffer = Buffer.from(await file.arrayBuffer());
+    // 1. Check Auth & Org
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-    if (file.name.endsWith(".xlsx") || file.name.endsWith(".csv")) {
-      const workbook = XLSX.read(buffer, { type: "buffer" });
-      workbook.SheetNames.forEach((sheetName) => {
-        const sheet = workbook.Sheets[sheetName];
-        rawText += `\n--- Sheet: ${sheetName} ---\n`;
-        rawText += XLSX.utils.sheet_to_txt(sheet, { blankrows: false });
-      });
-    } else {
-      rawText = buffer.toString("utf-8");
-    }
-
-    // 2. AI Extraction
-    const { object } = await generateObject({
-      model: openai("gpt-4o"),
-      schema: ControlExtractionSchema,
-      prompt: `
-        You are a Compliance Data Analyst. 
-        Extract unique security controls from standard: "${standardName}".
-        IGNORE intro text, legal notices, headers, footers.
-        Extract 'control_code', 'family', and 'description'.
-        
-        Content:
-        ${rawText.slice(0, 100000)} 
-      `,
-    });
-
-    const controls = object.controls;
-    
-    if (controls.length === 0) {
-      return NextResponse.json({ error: "No controls found." }, { status: 422 });
-    }
-
-    // 3. Database Operations
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
-
-    // A. Upsert Standard Record (The "Folder")
-    // --- UPDATED: Now saves url and storage_path ---
-    const { data: stdRecord, error: stdError } = await supabase
-      .from("standards_library")
-      .upsert(
-        { 
-          name: standardName, 
-          description: `Imported from ${file.name}`,
-          url: publicUrl,          // <--- Save Public Link
-          storage_path: storagePath // <--- Save File Path
-        }, 
-        { onConflict: "name" }
-      )
-      .select()
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("organization_id")
+      .eq("id", user.id)
       .single();
 
-    if (stdError) throw new Error(`DB Error (Standard): ${stdError.message}`);
+    if (!profile?.organization_id) {
+        return NextResponse.json({ error: "User has no organization linked." }, { status: 400 });
+    }
 
-    // B. Delete existing controls for this standard (Overwrite logic)
-    // NOTE: Ensure your DB table is named 'master_controls' or 'controls'. 
-    // Your frontend used 'controls' in the Inspect modal, but here it is 'master_controls'.
-    // Standardizing on 'master_controls' is safer if that is your schema.
-    const { error: deleteError } = await supabase
-      .from("master_controls")
-      .delete()
-      .eq("standard_id", stdRecord.id);
+    // 2. PARSE THE FILE
+    let data: any = { name: "", controls: [] };
+    let sheetsProcessed = 0; 
+    let validControls: any[] = [];
+    
+    const buffer = await file.arrayBuffer();
 
-    if (deleteError) throw new Error(`DB Error (Cleanup): ${deleteError.message}`);
+    if (file.name.endsWith(".json")) {
+        const text = new TextDecoder().decode(buffer);
+        data = JSON.parse(text);
+        validControls = data.controls;
+    } else {
+        // --- MATRIX CRAWLER LOGIC ---
+        const workbook = XLSX.read(buffer, { type: "array" });
+        
+        console.log(`Debug: Processing ${workbook.SheetNames.length} sheets...`);
 
-    // C. Insert New Controls
-    const controlsToInsert = controls.map((c) => ({
-      standard_id: stdRecord.id,
-      control_code: c.control_code,
-      family: c.family,
-      description: c.description,
-      // Optional: Add embedding generation logic here later if needed
-    }));
+        for (const sheetName of workbook.SheetNames) {
+            
+            // IGNORE MAPPING/SUMMARY TABS
+            const lowerName = sheetName.toLowerCase();
+            if (sheetName.startsWith("#") || lowerName.includes("mapping") || lowerName.includes("summary")) {
+                console.log(`Debug: Skipping ignored sheet "${sheetName}"`);
+                continue;
+            }
 
-    const { error: insertError } = await supabase
-      .from("master_controls")
-      .insert(controlsToInsert);
+            const sheet = workbook.Sheets[sheetName];
+            const grid = XLSX.utils.sheet_to_json(sheet, { header: 1 }) as any[][];
+            if (!grid || grid.length === 0) continue;
 
-    if (insertError) throw new Error(`DB Error (Insert): ${insertError.message}`);
+            let sheetControlsFound = 0;
 
-    // D. Update Total Count
-    await supabase
-        .from("standards_library")
-        .update({ total_controls: controls.length })
-        .eq("id", stdRecord.id);
+            for (let r = 0; r < grid.length; r++) {
+                const row = grid[r];
+                if (!row) continue;
 
-    return NextResponse.json({ 
-      success: true, 
-      count: controls.length, 
-      standard: stdRecord.name 
-    });
+                for (let c = 0; c < row.length; c++) {
+                    const cellValue = row[c];
+                    if (!cellValue || typeof cellValue !== 'string') continue;
+
+                    const cmmcRegex = /([A-Z]{2,3}\.L\d-[\d\.]+)/;
+                    const match = cellValue.match(cmmcRegex);
+
+                    if (match) {
+                        const fullText = cellValue;
+                        const controlId = match[1];
+
+                        const lines = fullText.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
+                        const idIndex = lines.findIndex(l => l.includes(controlId));
+                        
+                        let title = "";
+                        let description = "";
+
+                        if (idIndex !== -1 && idIndex + 1 < lines.length) {
+                            title = lines[idIndex + 1];
+                            description = lines.slice(idIndex + 2).join("\n");
+                        } else {
+                            description = fullText.replace(controlId, "").trim();
+                        }
+
+                        validControls.push({
+                            control_code: controlId,
+                            family: sheetName, 
+                            description: title + "\n" + description, 
+                            guidance: ""
+                        });
+                        sheetControlsFound++;
+                    }
+                }
+            }
+            if (sheetControlsFound > 0) {
+                console.log(`Debug: Extracted ${sheetControlsFound} controls from sheet "${sheetName}"`);
+                sheetsProcessed++;
+            }
+        }
+
+        data = {
+            name: formData.get("name") || file.name.replace(/\.[^/.]+$/, ""),
+            version: "CMMC 2.0", 
+            description: `Imported from Excel Matrix (${sheetsProcessed} sheets processed)`,
+            controls: validControls
+        };
+    }
+
+    console.log(`Debug: TOTAL Extracted ${data.controls.length} valid controls.`);
+
+    // 3. DUPLICATE CHECK (SAFE MODE)
+    // We log exactly what we are checking to debug the stall
+    console.log(`Debug: Checking for duplicates... Name: "${data.name}", Org: "${profile.organization_id}"`);
+    
+    let existing = null;
+    try {
+        const { data: found, error: findError } = await supabase
+            .from("standards_library")
+            .select("id")
+            .eq("name", data.name)
+            .eq("organization_id", profile.organization_id)
+            .maybeSingle(); // <--- CRITICAL CHANGE: maybeSingle() doesn't crash on 0 rows
+
+        if (findError) {
+            console.error("Debug: Find Error:", findError);
+            // If error is permission related, we might want to throw, but let's proceed to insert attempt if safe
+        }
+        existing = found;
+        console.log("Debug: Duplicate Check Result:", existing ? "Found ID: " + existing.id : "No duplicate found.");
+    
+    } catch (checkErr) {
+        console.error("Debug: CRASH in Duplicate Check:", checkErr);
+    }
+
+
+    if (existing && !forceUpdate) {
+      return NextResponse.json({ 
+        error: "Standard already exists", 
+        requiresConfirmation: true, 
+        standardName: data.name 
+      }, { status: 409 });
+    }
+
+    let standardId = existing?.id;
+
+    // 4. HEADER INSERT
+    console.log("Debug: Writing Standard Header to DB...");
+    if (existing && forceUpdate) {
+        await supabase.from("standards_library")
+            .update({
+                version: data.version,
+                description: data.description,
+                total_controls: data.controls.length
+            })
+            .eq("id", standardId);
+        
+        // Delete old controls
+        await supabase.from("master_controls").delete().eq("standard_id", standardId);
+    } else {
+        const { data: newStd, error: insertError } = await supabase.from("standards_library")
+            .insert({
+                name: data.name,
+                version: data.version,
+                description: data.description,
+                organization_id: profile.organization_id,
+                total_controls: data.controls.length
+            })
+            .select()
+            .single();
+        
+        if (insertError) {
+            console.error("Debug: Header Insert Failed:", insertError);
+            throw insertError;
+        }
+        standardId = newStd.id;
+        console.log("Debug: Standard Header Created. ID:", standardId);
+    }
+
+    // 5. BULK CONTROL INSERT
+    console.log(`Debug: Writing ${data.controls.length} controls to master_controls...`);
+    if (data.controls && data.controls.length > 0) {
+        const CHUNK_SIZE = 100;
+        let insertedCount = 0;
+
+        for (let i = 0; i < data.controls.length; i += CHUNK_SIZE) {
+            const chunk = data.controls.slice(i, i + CHUNK_SIZE).map((c: any) => ({
+                standard_id: standardId,
+                organization_id: profile.organization_id,
+                control_code: String(c.control_code).substring(0, 50),
+                family: String(c.family).substring(0, 100),
+                description: c.description,
+                guidance: c.guidance || null
+            }));
+            
+            const { error: ctrlError } = await supabase.from("master_controls").insert(chunk);
+            if (ctrlError) {
+                console.error("Batch Insert Error at index " + i, ctrlError);
+                throw ctrlError;
+            }
+            insertedCount += chunk.length;
+        }
+        
+        // Update total count
+        await supabase.from("standards_library")
+            .update({ total_controls: insertedCount })
+            .eq("id", standardId);
+    }
+
+    console.log("Debug: Ingest Complete. Returning Success.");
+    return NextResponse.json({ success: true, count: data.controls.length });
 
   } catch (error: any) {
-    console.error("[Ingest Error]", error);
+    console.error("Ingest Error:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
